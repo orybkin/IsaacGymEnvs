@@ -29,6 +29,7 @@
 import numpy as np
 import os
 import torch
+import math
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
@@ -81,6 +82,7 @@ class FrankaReaching(VecTask):
 
         self.action_scale = self.cfg["env"]["actionScale"]
         self.start_position_noise = self.cfg["env"]["startPositionNoise"]
+        self.goal_position_noise = self.cfg["env"]["startPositionNoise"]
         self.start_rotation_noise = self.cfg["env"]["startRotationNoise"]
         self.franka_position_noise = self.cfg["env"]["frankaPositionNoise"]
         self.franka_rotation_noise = self.cfg["env"]["frankaRotationNoise"]
@@ -102,7 +104,7 @@ class FrankaReaching(VecTask):
 
         # dimensions
         # obs include: cubeA_pose (7) + cubeB_pos (3) + eef_pose (7) + q_gripper (2)
-        self.cfg["env"]["numObservations"] = 19 if self.control_type == "osc" else 26
+        self.cfg["env"]["numObservations"] = 28 if self.control_type == "osc" else 35
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
         self.cfg["env"]["numActions"] = 7 if self.control_type == "osc" else 8
 
@@ -136,6 +138,7 @@ class FrankaReaching(VecTask):
         self._effort_control = None         # Torque actions
         self._franka_effort_limits = None        # Actuator effort limits for franka
         self._global_indices = None         # Unique indices corresponding to all envs in flattened array
+        self._goal_state = None
 
         self.debug_viz = self.cfg["env"]["enableDebugVis"]
 
@@ -225,11 +228,13 @@ class FrankaReaching(VecTask):
 
         # Create cubeA asset
         cubeA_opts = gymapi.AssetOptions()
+        cubeA_opts.disable_gravity = True
         cubeA_asset = self.gym.create_box(self.sim, *([self.cubeA_size] * 3), cubeA_opts)
         cubeA_color = gymapi.Vec3(0.6, 0.1, 0.0)
 
         # Create cubeB asset
         cubeB_opts = gymapi.AssetOptions()
+        cubeB_opts.disable_gravity = True
         cubeB_asset = self.gym.create_box(self.sim, *([self.cubeB_size] * 3), cubeB_opts)
         cubeB_color = gymapi.Vec3(0.0, 0.4, 0.1)
 
@@ -244,6 +249,7 @@ class FrankaReaching(VecTask):
         self.franka_dof_lower_limits = []
         self.franka_dof_upper_limits = []
         self._franka_effort_limits = []
+
         for i in range(self.num_franka_dofs):
             franka_dof_props['driveMode'][i] = gymapi.DOF_MODE_POS if i > 6 else gymapi.DOF_MODE_EFFORT
             if self.physics_engine == gymapi.SIM_PHYSX:
@@ -290,11 +296,22 @@ class FrankaReaching(VecTask):
         cubeB_start_pose.p = gymapi.Vec3(1.0, 0.0, 0.0)
         cubeB_start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
+        # Assets for goal
+        asset_options = gymapi.AssetOptions()
+        asset_options.fix_base_link = False
+        asset_options.angular_damping = 0.0
+        asset_options.max_angular_velocity = 4 * math.pi
+        asset_options.slices_per_cylinder = 40
+        asset_options.fix_base_link = True
+        marker_asset = self.gym.create_sphere(self.sim, 0.02, asset_options)
+        default_pose = gymapi.Transform()
+        default_pose.p.z = 1.0
+
         # compute aggregate size
         num_franka_bodies = self.gym.get_asset_rigid_body_count(franka_asset)
         num_franka_shapes = self.gym.get_asset_rigid_shape_count(franka_asset)
-        max_agg_bodies = num_franka_bodies + 4     # 1 for table, table stand, cubeA, cubeB
-        max_agg_shapes = num_franka_shapes + 4     # 1 for table, table stand, cubeA, cubeB
+        max_agg_bodies = num_franka_bodies + 5     # 1 for table, table stand, cubeA, cubeB, goal
+        max_agg_shapes = num_franka_shapes + 5     # 1 for table, table stand, cubeA, cubeB, goal
 
         self.frankas = []
         self.envs = []
@@ -334,6 +351,9 @@ class FrankaReaching(VecTask):
             if self.aggregate_mode == 1:
                 self.gym.begin_aggregate(env_ptr, max_agg_bodies, max_agg_shapes, True)
 
+            # Create target
+            self._marker_id = self.gym.create_actor(env_ptr, marker_asset, default_pose, "marker", i, 1, 1)
+            self.gym.set_rigid_body_color(env_ptr, self._marker_id, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(1, 0, 0))
             # Create cubes
             self._cubeA_id = self.gym.create_actor(env_ptr, cubeA_asset, cubeA_start_pose, "cubeA", i, 2, 0)
             self._cubeB_id = self.gym.create_actor(env_ptr, cubeB_asset, cubeB_start_pose, "cubeB", i, 4, 0)
@@ -394,6 +414,7 @@ class FrankaReaching(VecTask):
         self._mm = mm[:, :7, :7]
         self._cubeA_state = self._root_state[:, self._cubeA_id, :]
         self._cubeB_state = self._root_state[:, self._cubeB_id, :]
+        self._goal_state = self._root_state[:, self._marker_id, :]
 
         # Initialize states
         self.states.update({
@@ -410,7 +431,7 @@ class FrankaReaching(VecTask):
         self._gripper_control = self._pos_control[:, 7:9]
 
         # Initialize indices
-        self._global_indices = torch.arange(self.num_envs * 5, dtype=torch.int32,
+        self._global_indices = torch.arange(self.num_envs * 6, dtype=torch.int32,
                                            device=self.device).view(self.num_envs, -1)
 
     def _update_states(self):
@@ -424,12 +445,15 @@ class FrankaReaching(VecTask):
             "eef_lf_pos": self._eef_lf_state[:, :3],
             "eef_rf_pos": self._eef_rf_state[:, :3],
             # Cubes
+            "cubeA_vel": self._cubeA_state[:, 7:10],
             "cubeA_quat": self._cubeA_state[:, 3:7],
             "cubeA_pos": self._cubeA_state[:, :3],
             "cubeA_pos_relative": self._cubeA_state[:, :3] - self._eef_state[:, :3],
+            "cubeB_vel": self._cubeB_state[:, 7:10],
             "cubeB_quat": self._cubeB_state[:, 3:7],
             "cubeB_pos": self._cubeB_state[:, :3],
             "cubeA_to_cubeB_pos": self._cubeB_state[:, :3] - self._cubeA_state[:, :3],
+            "goal_pos": self._goal_state[:, :3],
         })
 
     def _refresh(self):
@@ -449,7 +473,7 @@ class FrankaReaching(VecTask):
 
     def compute_observations(self):
         self._refresh()
-        obs = ["cubeA_quat", "cubeA_pos", "cubeA_to_cubeB_pos", "eef_pos", "eef_quat"]
+        obs = ["cubeA_quat", "cubeA_pos", "cubeA_to_cubeB_pos", "eef_pos", "eef_quat", "goal_pos", "cubeA_vel", "cubeB_vel"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
 
@@ -464,6 +488,7 @@ class FrankaReaching(VecTask):
         # if not self._i:
         self._reset_init_cube_state(cube='B', env_ids=env_ids, check_valid=False)
         self._reset_init_cube_state(cube='A', env_ids=env_ids, check_valid=True)
+        self._reset_goal_state(env_ids=env_ids)
         # self._i = True
 
         # Write these new init states to the sim states
@@ -505,7 +530,7 @@ class FrankaReaching(VecTask):
                                               len(multi_env_ids_int32))
 
         # Update cube states
-        multi_env_ids_cubes_int32 = self._global_indices[env_ids, -2:].flatten()
+        multi_env_ids_cubes_int32 = self._global_indices[env_ids, -3:].flatten()
         self.gym.set_actor_root_state_tensor_indexed(
             self.sim, gymtorch.unwrap_tensor(self._root_state),
             gymtorch.unwrap_tensor(multi_env_ids_cubes_int32), len(multi_env_ids_cubes_int32))
@@ -553,10 +578,10 @@ class FrankaReaching(VecTask):
         min_dists = min_dists * 2.0
 
         # Sampling is "centered" around middle of table
-        centered_cube_xy_state = torch.tensor(self._table_surface_pos[:2], device=self.device, dtype=torch.float32)
+        centered_cube_xy_state = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
 
         # Set z value, which is fixed height
-        sampled_cube_state[:, 2] = self._table_surface_pos[2] + cube_heights.squeeze(-1)[env_ids] / 2
+        centered_cube_xy_state[2] = centered_cube_xy_state[2] + 0.5
 
         # Initialize rotation, which is no rotation (quat w = 1)
         sampled_cube_state[:, 6] = 1.0
@@ -570,11 +595,15 @@ class FrankaReaching(VecTask):
             num_active_idx = len(active_idx)
             for i in range(100):
                 # Sample x y values
-                sampled_cube_state[active_idx, :2] = centered_cube_xy_state + \
+                sampled_cube_state[active_idx, :3] = centered_cube_xy_state + \
                                                      2.0 * self.start_position_noise * (
-                                                             torch.rand_like(sampled_cube_state[active_idx, :2]) - 0.5)
+                                                             torch.rand_like(sampled_cube_state[active_idx, :3]) - 0.5)
                 # Check if sampled values are valid
-                cube_dist = torch.linalg.norm(sampled_cube_state[:, :2] - other_cube_state[:, :2], dim=-1)
+
+                # sampled_cube_state[:, 0] = -0.3
+                # sampled_cube_state[:, 1] = -0.3
+                # sampled_cube_state[:, 2] = 1.5   
+                cube_dist = torch.linalg.norm(sampled_cube_state[:, :3] - other_cube_state[:, :3], dim=-1)
                 active_idx = torch.nonzero(cube_dist < min_dists, as_tuple=True)[0]
                 num_active_idx = len(active_idx)
                 # If active idx is empty, then all sampling is valid :D
@@ -583,11 +612,16 @@ class FrankaReaching(VecTask):
                     break
             # Make sure we succeeded at sampling
             assert success, "Sampling cube locations was unsuccessful! ):"
+            
         else:
             # We just directly sample
-            sampled_cube_state[:, :2] = centered_cube_xy_state.unsqueeze(0) + \
+            sampled_cube_state[:, :3] = centered_cube_xy_state.unsqueeze(0) + \
                                               2.0 * self.start_position_noise * (
-                                                      torch.rand(num_resets, 2, device=self.device) - 0.5)
+                                                      torch.rand(num_resets, 3, device=self.device) - 0.5)
+            
+            # sampled_cube_state[:, 0] = 0.3
+            # sampled_cube_state[:, 1] = 0.3
+            # sampled_cube_state[:, 2] = 1.5
 
         # Sample rotation value
         if self.start_rotation_noise > 0:
@@ -597,6 +631,39 @@ class FrankaReaching(VecTask):
 
         # Lastly, set these sampled values as the new init state
         this_cube_state_all[env_ids, :] = sampled_cube_state
+
+
+    def _reset_goal_state(self, env_ids):
+        """
+
+        Args:
+            env_ids (tensor or None): Specific environments to reset cube for
+        """
+        # If env_ids is None, we reset all the envs
+        # TODO randomize Z
+        if env_ids is None:
+            env_ids = torch.arange(start=0, end=self.num_envs, device=self.device, dtype=torch.long)
+
+        # Initialize buffer to hold sampled values
+        num_resets = len(env_ids)
+        sampled_goal_state = torch.zeros(num_resets, 13, device=self.device)
+
+        # Sampling is "centered" around middle of table
+        centered_goal_xyz_state = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
+
+        # Set z value, which is fixed height
+        centered_goal_xyz_state[2] = centered_goal_xyz_state[2] + 0.5
+
+        # Initialize rotation, which is no rotation (quat w = 1)
+        sampled_goal_state[:, 6] = 1.0
+
+        sampled_goal_state[:, :3] = centered_goal_xyz_state.unsqueeze(0) + \
+                                            2.0 * self.goal_position_noise * (
+                                                    torch.rand(num_resets, 3, device=self.device) - 0.5)
+
+        # Lastly, set these sampled values as the new init state
+        self._goal_state[env_ids, :] = sampled_goal_state
+
 
     def _compute_osc_torques(self, dpose):
         # Solve for Operational Space Control # Paper: khatib.stanford.edu/publications/pdfs/Khatib_1987_RA.pdf
@@ -664,6 +731,13 @@ class FrankaReaching(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
+        # Extra logging
+        self.extras["episode_cumulative"] = dict()
+        self.extras["episode_cumulative"]["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states["eef_pos"], dim=-1)
+        self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
+        self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
+        self.extras["episode_cumulative"]["cubeB_vel"] = torch.norm(self.states["cubeB_vel"], dim=-1)
+
         # debug viz
         if self.viewer and self.debug_viz:
             self.gym.clear_lines(self.viewer)
@@ -700,48 +774,19 @@ def compute_franka_reward(
 ):
     # type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float) -> Tuple[Tensor, Tensor]
 
-    # Compute per-env physical parameters
-    target_height = states["cubeB_size"] + states["cubeA_size"] / 2.0
-    cubeA_size = states["cubeA_size"]
-    cubeB_size = states["cubeB_size"]
+    # distance from hand to the goal
+    d = torch.norm(states["goal_pos"] - states["eef_pos"], dim=-1)
+    dist_reward = 1 - torch.tanh(10.0 * d)
 
-    # distance from hand to the cubeA
-    d = torch.norm(states["cubeA_pos_relative"], dim=-1)
-    d_lf = torch.norm(states["cubeA_pos"] - states["eef_lf_pos"], dim=-1)
-    d_rf = torch.norm(states["cubeA_pos"] - states["eef_rf_pos"], dim=-1)
-    dist_reward = 1 - torch.tanh(10.0 * (d + d_lf + d_rf) / 3)
-
-    # reward for lifting cubeA
-    cubeA_height = states["cubeA_pos"][:, 2] - reward_settings["table_height"]
-    cubeA_lifted = (cubeA_height - cubeA_size) > 0.04
-    lift_reward = cubeA_lifted
-
-    # how closely aligned cubeA is to cubeB (only provided if cubeA is lifted)
-    offset = torch.zeros_like(states["cubeA_to_cubeB_pos"])
-    offset[:, 2] = (cubeA_size + cubeB_size) / 2
-    d_ab = torch.norm(states["cubeA_to_cubeB_pos"] + offset, dim=-1)
-    align_reward = (1 - torch.tanh(10.0 * d_ab)) * cubeA_lifted
-
-    # Dist reward is maximum of dist and align reward
-    dist_reward = torch.max(dist_reward, align_reward)
-
-    # final reward for stacking successfully (only if cubeA is close to target height and corresponding location, and gripper is not grasping)
-    cubeA_align_cubeB = (torch.norm(states["cubeA_to_cubeB_pos"][:, :2], dim=-1) < 0.02)
-    cubeA_on_cubeB = torch.abs(cubeA_height - target_height) < 0.02
-    gripper_away_from_cubeA = (d > 0.04)
-    stack_reward = cubeA_align_cubeB & cubeA_on_cubeB & gripper_away_from_cubeA
-
-    # Compose rewards
-
-    # We either provide the stack reward or the align + dist reward
-    rewards = torch.where(
-        stack_reward,
-        reward_settings["r_stack_scale"] * stack_reward,
-        reward_settings["r_dist_scale"] * dist_reward + reward_settings["r_lift_scale"] * lift_reward + reward_settings[
-            "r_align_scale"] * align_reward,
-    )
+    # cube velocities
+    d = torch.norm(states["cubeA_vel"], dim=-1)
+    cubeA_reward = 1 - d
+    d = torch.norm(states["cubeB_vel"], dim=-1)
+    cubeB_reward = 1 - d
 
     # Compute resets
-    reset_buf = torch.where((progress_buf >= max_episode_length - 1) | (stack_reward > 0), torch.ones_like(reset_buf), reset_buf)
+    reset_buf = torch.where((progress_buf >= max_episode_length - 1), torch.ones_like(reset_buf), reset_buf)
 
-    return rewards, reset_buf
+    # return (dist_reward + cubeA_reward + cubeB_reward), reset_buf
+    # return (cubeA_reward + cubeB_reward) / 2, reset_buf
+    return dist_reward, reset_buf
