@@ -1,0 +1,1 @@
+singularity run -B /var/lib/dcv-gl --nv --writable-tmpfs /global/scratch/users/oleh/taskmaster_base.sif -- bash /global/scratch/users/oleh/taskmaster/isaacgymenvs/run_container.sh "$@"

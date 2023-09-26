@@ -13,7 +13,6 @@ env:
   clipObservations: 5.0
   clipActions: 1.0
 
-  startPositionNoise: 0.25
   startRotationNoise: 0.785
   frankaPositionNoise: 0.0
   frankaRotationNoise: 0.0
@@ -26,6 +25,9 @@ env:
   liftRewardScale: 1.5
   alignRewardScale: 2.0
   stackRewardScale: 16.0
+
+  nCubes: 6
+  startPositionNoise: 0.12
 
   controlType: osc  # options are {joint_tor, osc}
 

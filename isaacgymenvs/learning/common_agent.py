@@ -120,7 +120,7 @@ class CommonAgent(a2c_continuous.A2CAgent):
 
 
         self.model_output_file = os.path.join(self.network_path, 
-            self.config['name'] + '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
+            self.config['name'] + '_{date:%d-%H-%M-%S-%f}'.format(date=datetime.now()))
 
         self._init_train()
 

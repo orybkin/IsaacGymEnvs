@@ -85,13 +85,13 @@ class FrankaPushing(VecTask):
         # self.start_position_noise = self.cfg["env"]["startPositionNoise"]
         self.start_position_noise = self.bin_radius - 0.03
         self.goal_position_noise = self.start_position_noise
-        self.start_position_noise = 0.075
+        self.start_position_noise = self.cfg["env"]["startPositionNoise"]
         self.start_rotation_noise = self.cfg["env"]["startRotationNoise"]
         self.franka_position_noise = self.cfg["env"]["frankaPositionNoise"]
         self.franka_rotation_noise = self.cfg["env"]["frankaRotationNoise"]
         self.franka_dof_noise = self.cfg["env"]["frankaDofNoise"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
-        self.n_cubes = 1
+        self.n_cubes = self.cfg["env"]["nCubes"]
 
         # Create dicts to pass to reward function
         self.reward_settings = {
