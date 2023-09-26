@@ -376,7 +376,7 @@ class FrankaPushing(VecTask):
                 self.gym.begin_aggregate(env_ptr, max_agg_bodies, max_agg_shapes, True)
 
             # Create goal
-            self._marker_id = self.gym.create_actor(env_ptr, marker_asset, default_pose, "marker", i, 1, 1)
+            self._marker_id = self.gym.create_actor(env_ptr, marker_asset, default_pose, "marker", num_envs, 1, 0)
             self.gym.set_rigid_body_color(env_ptr, self._marker_id, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(1, 0, 0))
 
             # Create cubes
