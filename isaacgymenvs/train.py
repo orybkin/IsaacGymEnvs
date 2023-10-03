@@ -101,8 +101,14 @@ def launch_rlg_hydra(cfg: DictConfig):
     import isaacgymenvs
 
 
-    time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    run_name = f"{cfg.wandb_name}_{time_str}"
+    time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f")
+    if cfg.slurm_job_id:
+        run_name = f"{cfg.slurm_job_id}_{cfg.wandb_name}"
+    else:
+        run_name = f"{cfg.wandb_name}_{time_str}"
+    OmegaConf.set_struct(cfg, False)
+    cfg.full_experiment_name = run_name
+    OmegaConf.set_struct(cfg, True)
 
     # ensure checkpoints can be specified as relative paths
     if cfg.checkpoint:
@@ -202,11 +208,13 @@ def launch_rlg_hydra(cfg: DictConfig):
     # dump config dict
     if not cfg.test:
         experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
-        '_{date:%d-%H-%M-%S}'.format(date=datetime.now()))
+        '_{date:%d-%H-%M-%S-%f}'.format(date=datetime.now()))
 
         os.makedirs(experiment_dir, exist_ok=True)
         with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
             f.write(OmegaConf.to_yaml(cfg))
+
+    
 
     runner.run({
         'train': not cfg.test,

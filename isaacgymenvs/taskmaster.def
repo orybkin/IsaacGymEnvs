@@ -1,0 +1,6 @@
+Bootstrap: localimage
+From: ./taskmaster_base.sif
+
+# Container setup
+%post -c /bin/bash 
+    rm -rf /home/taskmaster
