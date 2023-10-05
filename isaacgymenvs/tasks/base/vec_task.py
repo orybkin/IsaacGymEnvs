@@ -93,9 +93,9 @@ class Env(ABC):
         # if training in a headless mode
         self.headless = headless
 
-        enable_camera_sensors = config.get("enableCameraSensors", False)
+        self.enable_camera_sensors = config["env"].get("enableCameraSensors", False)
         self.graphics_device_id = graphics_device_id
-        if enable_camera_sensors == False and self.headless == True:
+        if self.enable_camera_sensors == False and self.headless == True:
             self.graphics_device_id = -1
 
         self.num_environments = config["env"]["numEnvs"]
@@ -510,6 +510,9 @@ class VecTask(Env):
             if self.virtual_display and mode == "rgb_array":
                 img = self.virtual_display.grab()
                 return np.array(img)
+        elif self.enable_camera_sensors:
+            self.gym.fetch_results(self.sim, True)
+            self.gym.step_graphics(self.sim)
 
     def __parse_sim_params(self, physics_engine: str, config_sim: Dict[str, Any]) -> gymapi.SimParams:
         """Parse the config dictionary for physics stepping settings.
