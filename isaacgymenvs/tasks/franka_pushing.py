@@ -396,6 +396,7 @@ class FrankaPushing(VecTask):
                 # cam_props.supersampling_vertical = self.cam_ss
                 cam_props.enable_tensors = True
                 cam_handle = self.gym.create_camera_sensor(env_ptr, cam_props)
+                self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(5, 1, 0), gymapi.Vec3(0, 1, 0))
                 # rigid_body_mount_ind = self.gym.find_actor_rigid_body_handle(env_ptr, kuka_actor, "allegro_mount")
                 # local_t = gymapi.Transform()
                 # local_t.p = gymapi.Vec3(*self.cam_loc_p)
