@@ -31,6 +31,5 @@ runs/
 outputs/
 *.hydra*
 /isaacgymenvs/wandb
-isaacgymenvs/taskmaster_base.sif
+*.sif
 isaacgymenvs/IsaacGym_Preview_4_Package.tar.gz
-isaacgymenvs/taskmaster.sif
