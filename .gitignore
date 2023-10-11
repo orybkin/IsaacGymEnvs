@@ -33,3 +33,6 @@ outputs/
 /isaacgymenvs/wandb
 *.sif
 isaacgymenvs/IsaacGym_Preview_4_Package.tar.gz
+isaacgymenvs/sandbox_taskmaster/
+isaacgymenvs/build-temp-*
+*.pth

@@ -93,6 +93,9 @@ class FrankaPushing(VecTask):
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
         self.n_cubes = self.cfg["env"]["nCubes"]
 
+        self.im_size = self.cam_w = 64
+        self.max_pix = 16
+
         # Create dicts to pass to reward function
         self.reward_settings = {
             "r_dist_scale": self.cfg["env"]["distRewardScale"],
@@ -386,26 +389,15 @@ class FrankaPushing(VecTask):
                 self.gym.set_rigid_body_color(env_ptr, self._cube_ids[j], 0, gymapi.MESH_VISUAL, cube_colors[j])
 
             # Set up camera
-            if self.enable_camera_sensors:
+            if self.enable_camera_sensors and i < self.max_pix:
                 # Camera
                 cam_props = gymapi.CameraProperties()
-                # cam_props.width = self.cam_w
-                # cam_props.height = self.cam_h
-                # cam_props.horizontal_fov = self.cam_fov
-                # cam_props.supersampling_horizontal = self.cam_ss
-                # cam_props.supersampling_vertical = self.cam_ss
+                cam_props.width = self.cam_w
+                cam_props.height = self.cam_w
                 cam_props.enable_tensors = True
                 cam_handle = self.gym.create_camera_sensor(env_ptr, cam_props)
-                self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(5, 1, 0), gymapi.Vec3(0, 1, 0))
-                # rigid_body_mount_ind = self.gym.find_actor_rigid_body_handle(env_ptr, kuka_actor, "allegro_mount")
-                # local_t = gymapi.Transform()
-                # local_t.p = gymapi.Vec3(*self.cam_loc_p)
-                # xyz_angle_rad = [np.radians(a) for a in self.cam_loc_r]
-                # local_t.r = gymapi.Quat.from_euler_zyx(*xyz_angle_rad)
-                # self.gym.attach_camera_to_body(
-                #     cam_handle, env_ptr, rigid_body_mount_ind,
-                #     local_t, gymapi.FOLLOW_TRANSFORM
-                # )
+                self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(0.12, 0, 1.25), gymapi.Vec3(0, 0, 1))
+                # self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(0.2, 0, 1.3), gymapi.Vec3(0, 0, 1))
                 self.cams.append(cam_handle)
                 # Camera tensor
                 cam_tensor = self.gym.get_camera_image_gpu_tensor(self.sim, env_ptr, cam_handle, gymapi.IMAGE_COLOR)
@@ -535,12 +527,15 @@ class FrankaPushing(VecTask):
     def compute_pixel_obs(self):
         self.gym.render_all_camera_sensors(self.sim)
         self.gym.start_access_image_tensors(self.sim)
-        for i in range(self.num_envs):
+        for i in range(min(self.num_envs, self.max_pix)):
             crop_l = (self.cam_w - self.im_size) // 2
             crop_r = crop_l + self.im_size
-            self.obs_buf[i] = self.cam_tensors[i][:, crop_l:crop_r, :3].permute(2, 0, 1).float() / 255.
-            self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
+            self.pix_buf[i] = self.cam_tensors[i][:, crop_l:crop_r, :3].permute(2, 0, 1).float() / 255.
+            # self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
         self.gym.end_access_image_tensors(self.sim)
+        import imageio
+        imageio.imwrite("render.png" , (self.pix_buf[0].cpu().numpy().transpose(1,2,0) * 255).astype(np.uint8))
+        # import pdb; pdb.set_trace()
 
     def reset_idx(self, env_ids):
         env_ids_int32 = env_ids.to(dtype=torch.int32)
@@ -774,9 +769,13 @@ class FrankaPushing(VecTask):
             self.reset_idx(env_ids)
 
         self.compute_observations()
+        if self.enable_camera_sensors:
+            self.compute_pixel_obs()
         self.compute_reward(self.actions)
 
         # Extra logging
+        if self.enable_camera_sensors:
+            self.extras["images"] = self.pix_buf # TODO clone?
         self.extras["episode_cumulative"] = dict()
         self.extras["episode_cumulative"]["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states["eef_pos"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)

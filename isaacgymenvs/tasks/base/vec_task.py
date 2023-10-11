@@ -322,6 +322,10 @@ class VecTask(Env):
         self.randomize_buf = torch.zeros(
             self.num_envs, device=self.device, dtype=torch.long)
         self.extras = {}
+        if self.enable_camera_sensors:
+            self.pix_buf = torch.zeros((min(self.num_envs, self.max_pix), 
+                                        3, self.cam_w, self.cam_w), device=self.device, dtype=torch.float)
+
 
     def create_sim(self, compute_device: int, graphics_device: int, physics_engine, sim_params: gymapi.SimParams):
         """Create an Isaac Gym sim object.

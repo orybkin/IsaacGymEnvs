@@ -29,8 +29,8 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
 
     # Install taskmaster dependencies
     apt-get install git -y
-    mkdir -p /global/scratch/user/oleh/
-    cd /global/scratch/user/oleh/
+    mkdir -p /global/scratch/users/oleh/
+    cd /global/scratch/users/oleh/
     GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" git clone https://github.com/orybkin/taskmaster.git
     cd taskmaster
     pip install -e .

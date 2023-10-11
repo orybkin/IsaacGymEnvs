@@ -140,6 +140,7 @@ class RLGPUAlgoObserver(AlgoObserver):
 
         self.episode_cumulative = dict()
         self.episode_cumulative_avg = dict()
+        self.videos = []
         self.new_finished_episodes = False
 
     def after_init(self, algo):
@@ -153,6 +154,9 @@ class RLGPUAlgoObserver(AlgoObserver):
 
         if 'episode' in infos:
             self.ep_infos.append(infos['episode'])
+
+        if 'images' in infos:
+            self.videos.append(infos['images'].cpu().numpy())
 
         if 'episode_cumulative' in infos:
             for key, value in infos['episode_cumulative'].items():
@@ -202,6 +206,9 @@ class RLGPUAlgoObserver(AlgoObserver):
                 self.writer.add_scalar(f'episode_cumulative_min/{key}_min', np.min(self.episode_cumulative_avg[key]), frame)
                 self.writer.add_scalar(f'episode_cumulative_max/{key}_max', np.max(self.episode_cumulative_avg[key]), frame)
             self.new_finished_episodes = False
+
+            self.writer.add_video('execution', np.stack(self.videos, 1))
+            self.videos = []
 
         for k, v in self.direct_info.items():
             self.writer.add_scalar(f'{k}/frame', v, frame)
