@@ -533,9 +533,6 @@ class FrankaPushing(VecTask):
             self.pix_buf[i] = self.cam_tensors[i][:, crop_l:crop_r, :3].permute(2, 0, 1).float() / 255.
             # self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
         self.gym.end_access_image_tensors(self.sim)
-        import imageio
-        imageio.imwrite("render.png" , (self.pix_buf[0].cpu().numpy().transpose(1,2,0) * 255).astype(np.uint8))
-        # import pdb; pdb.set_trace()
 
     def reset_idx(self, env_ids):
         env_ids_int32 = env_ids.to(dtype=torch.int32)
@@ -774,8 +771,10 @@ class FrankaPushing(VecTask):
         self.compute_reward(self.actions)
 
         # Extra logging
+        if 'images' in self.extras:
+            self.extras.pop("images")
         if self.render_this_step():
-            self.extras["images"] = self.pix_buf # TODO clone?
+            self.extras["images"] = self.pix_buf
         self.extras["episode_cumulative"] = dict()
         self.extras["episode_cumulative"]["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states["eef_pos"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
