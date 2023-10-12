@@ -29,6 +29,8 @@ env:
   nCubes: 6
   startPositionNoise: 0.12
 
+  renderEveryEpisodes: 100
+
   controlType: osc  # options are {joint_tor, osc}
 
   asset:
@@ -36,7 +38,7 @@ env:
     assetFileNameFranka: "urdf/franka_description/robots/franka_panda_gripper.urdf"
 
   # set to True if you use camera sensors in the environment
-  enableCameraSensors: False
+  enableCameraSensors: True
 
 sim:
   dt: 0.01667 # 1/60

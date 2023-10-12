@@ -769,12 +769,12 @@ class FrankaPushing(VecTask):
             self.reset_idx(env_ids)
 
         self.compute_observations()
-        if self.enable_camera_sensors:
+        if self.render_this_step():
             self.compute_pixel_obs()
         self.compute_reward(self.actions)
 
         # Extra logging
-        if self.enable_camera_sensors:
+        if self.render_this_step():
             self.extras["images"] = self.pix_buf # TODO clone?
         self.extras["episode_cumulative"] = dict()
         self.extras["episode_cumulative"]["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states["eef_pos"], dim=-1)

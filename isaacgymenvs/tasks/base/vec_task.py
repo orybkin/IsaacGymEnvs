@@ -115,6 +115,8 @@ class Env(ABC):
         self.clip_obs = config["env"].get("clipObservations", np.Inf)
         self.clip_actions = config["env"].get("clipActions", np.Inf)
 
+        self.render_every_episodes = config["env"].get("renderEveryEpisodes", 1)
+
         # Total number of training frames since the beginning of the experiment.
         # We get this information from the learning algorithm rather than tracking ourselves.
         # The learning algorithm tracks the total number of frames since the beginning of training and accounts for
@@ -266,6 +268,10 @@ class VecTask(Env):
         self.allocate_buffers()
 
         self.obs_dict = {}
+
+    def render_this_step(self):
+        episode_n = self.control_steps // self.max_episode_length 
+        return episode_n % self.render_every_episodes == 0 and self.enable_camera_sensors
 
     def set_viewer(self):
         """Create the viewer."""
@@ -514,7 +520,7 @@ class VecTask(Env):
             if self.virtual_display and mode == "rgb_array":
                 img = self.virtual_display.grab()
                 return np.array(img)
-        elif self.enable_camera_sensors:
+        elif self.render_this_step():
             self.gym.fetch_results(self.sim, True)
             self.gym.step_graphics(self.sim)
 

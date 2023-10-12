@@ -207,8 +207,9 @@ class RLGPUAlgoObserver(AlgoObserver):
                 self.writer.add_scalar(f'episode_cumulative_max/{key}_max', np.max(self.episode_cumulative_avg[key]), frame)
             self.new_finished_episodes = False
 
-            self.writer.add_video('execution', np.stack(self.videos, 1))
-            self.videos = []
+            if self.videos:
+                self.writer.add_video('execution', np.stack(self.videos, 1))
+                self.videos = []
 
         for k, v in self.direct_info.items():
             self.writer.add_scalar(f'{k}/frame', v, frame)
