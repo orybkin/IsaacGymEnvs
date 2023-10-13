@@ -771,8 +771,9 @@ class FrankaPushing(VecTask):
         if self.render_this_step():
             self.extras["images"] = self.pix_buf
         self.extras["episode_episodic"] = dict()
-        self.extras["episode_episodic"]["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states["eef_pos"], dim=-1)
-        self.extras["episode_episodic"]["success"] = torch.norm(self.states["goal_pos"] - self.states["eef_pos"], dim=-1) < 0.02
+        self.extras["episode_episodic"]["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states["cube0_pos"], dim=-1)
+        self.extras["episode_episodic"]["success@4"] = torch.norm(self.states["goal_pos"] - self.states["cube0_pos"], dim=-1) < 0.04
+        self.extras["episode_episodic"]["success@2"] = torch.norm(self.states["goal_pos"] - self.states["cube0_pos"], dim=-1) < 0.02
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeB_vel"] = torch.norm(self.states["cubeB_vel"], dim=-1)
