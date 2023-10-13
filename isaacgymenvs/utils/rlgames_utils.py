@@ -140,6 +140,8 @@ class RLGPUAlgoObserver(AlgoObserver):
 
         self.episode_cumulative = dict()
         self.episode_cumulative_avg = dict()
+        self.episode_episodic = dict()
+        self.episode_episodic_stats = dict()
         self.videos = []
         self.new_finished_episodes = False
 
@@ -175,6 +177,30 @@ class RLGPUAlgoObserver(AlgoObserver):
                     self.episode_cumulative_avg[key].append(self.episode_cumulative[key][done_idx].item())
                     self.episode_cumulative[key][done_idx] = 0
 
+        if 'episode_episodic' in infos:
+            for key, value in infos['episode_episodic'].items():
+                if key not in self.episode_episodic:
+                    self.episode_episodic[key] = []
+                self.episode_episodic[key].append(value.cpu().numpy())
+
+            # TODO assert done_indices all or nothing
+
+            if len(done_indices) > 0:
+                self.new_finished_episodes = True
+
+                for key, value in infos['episode_episodic'].items():
+                    if key not in self.episode_episodic_stats:
+                        self.episode_episodic_stats[key] = dict()
+
+                    data = np.stack(self.episode_episodic[key])
+                    self.episode_episodic_stats[key]['avg'] = data.mean(0)
+                    self.episode_episodic_stats[key]['min'] = data.min(0)
+                    self.episode_episodic_stats[key]['max'] = data.max(0)
+                    self.episode_episodic_stats[key]['last'] = data[-1]
+                    self.episode_episodic[key] = []
+                
+                assert len(done_indices) == data.shape[1]
+
         # turn nested infos into summary keys (i.e. infos['scalars']['lr'] -> infos['scalars/lr']
         if len(infos) > 0 and isinstance(infos, dict):  # allow direct logging from env
             infos_flat = flatten_dict(infos, prefix='', separator='/')
@@ -205,6 +231,9 @@ class RLGPUAlgoObserver(AlgoObserver):
                 self.writer.add_scalar(f'episode_cumulative/{key}', np.mean(self.episode_cumulative_avg[key]), frame)
                 self.writer.add_scalar(f'episode_cumulative_min/{key}_min', np.min(self.episode_cumulative_avg[key]), frame)
                 self.writer.add_scalar(f'episode_cumulative_max/{key}_max', np.max(self.episode_cumulative_avg[key]), frame)
+            for metric, value in self.episode_episodic_stats.items():
+                for stat, scalar in value.items():
+                    self.writer.add_scalar(f'episode_episodic_stats/{metric}_{stat}', np.mean(scalar), frame)
             self.new_finished_episodes = False
 
             if self.videos:
