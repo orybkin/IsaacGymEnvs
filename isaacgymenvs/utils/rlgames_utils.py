@@ -238,6 +238,14 @@ class RLGPUAlgoObserver(AlgoObserver):
 
             if self.videos:
                 self.writer.add_video('execution', np.stack(self.videos, 1))
+                self.writer.add_images('start', self.videos[1])
+                self.writer.add_images('end', self.videos[-1])
+                from tensorboardX.utils import _prepare_video
+                import imageio
+                import torchvision
+                imageio.mimwrite('eval.gif', (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8))
+                imageio.imwrite('eval_start.png', (torchvision.utils.make_grid(torch.tensor(self.videos[1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
+                imageio.imwrite('eval_end.png', (torchvision.utils.make_grid(torch.tensor(self.videos[-1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
                 self.videos = []
 
         for k, v in self.direct_info.items():

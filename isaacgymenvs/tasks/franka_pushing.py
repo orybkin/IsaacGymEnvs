@@ -93,7 +93,7 @@ class FrankaPushing(VecTask):
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
         self.n_cubes = self.cfg["env"]["nCubes"]
 
-        self.im_size = self.cam_w = 64
+        self.im_size = self.cam_w = 128
         self.max_pix = 16
 
         # Create dicts to pass to reward function
