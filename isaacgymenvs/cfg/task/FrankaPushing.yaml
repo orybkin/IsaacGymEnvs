@@ -25,7 +25,7 @@ env:
   nCubes: 6
   startPositionNoise: 0.12
 
-  renderEveryEpisodes: 100
+  renderEveryEpisodes: 1000
 
   controlType: osc  # options are {joint_tor, osc}
 
