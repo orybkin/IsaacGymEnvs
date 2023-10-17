@@ -1336,7 +1336,7 @@ class ContinuousA2CBase(A2CBase):
             frame = self.frame // self.num_agents
             if self.global_rank == 0:
                 sigma = self.dataset.values_dict['sigma'][self.dataset.last_range[0]:self.dataset.last_range[1]].mean()
-                self.writer.add_scalar('info/epochs', sigma, frame)
+                self.writer.add_scalar('info/sigma', sigma, frame)
 
             # cleaning memory to optimize space
             self.dataset.update_values_dict(None)
