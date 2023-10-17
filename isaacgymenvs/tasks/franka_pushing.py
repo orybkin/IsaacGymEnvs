@@ -238,13 +238,13 @@ class FrankaPushing(VecTask):
         table_stand_opts.fix_base_link = True
         table_stand_asset = self.gym.create_box(self.sim, *[0.2, 0.2, table_stand_height], table_opts)
 
-        self.cube_sizes = [0.05] + [0.07] * self.n_cubes
+        self.cube_sizes = [0.07] + [0.07] * self.n_cubes
 
         # Create cubeA asset
         cube_assets = []
         cube_colors = []
         cube_options = gymapi.AssetOptions()
-        cube_options.density = 10
+        cube_options.density = 1000
         for j in range(self.n_cubes):
             cube_assets += [self.gym.create_box(self.sim, *([self.cube_sizes[j]] * 3), cube_options)]
             cube_colors += [gymapi.Vec3(0.0, np.random.rand(), np.random.rand())]
