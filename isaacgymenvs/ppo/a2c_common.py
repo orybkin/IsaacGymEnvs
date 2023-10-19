@@ -6,7 +6,7 @@ from rl_games.common import vecenv
 from rl_games.algos_torch.moving_mean_std import GeneralizedMovingStats
 from rl_games.algos_torch.self_play_manager import SelfPlayManager
 from rl_games.algos_torch import torch_ext
-from rl_games.common import schedulers
+from isaacgymenvs.ppo import schedulers
 from rl_games.common.experience import ExperienceBuffer
 from rl_games.common.interval_summary_writer import IntervalSummaryWriter
 from rl_games.common.diagnostics import DefaultDiagnostics, PpoDiagnostics
@@ -167,7 +167,6 @@ class A2CBase(BaseAlgorithm):
         self.max_frames = self.config.get('max_frames', -1)
 
         self.is_adaptive_lr = config['lr_schedule'] == 'adaptive'
-        self.linear_lr = config['lr_schedule'] == 'linear'
         self.schedule_type = config.get('schedule_type', 'legacy')
 
         # Setting learning rate scheduler
@@ -175,7 +174,7 @@ class A2CBase(BaseAlgorithm):
             self.kl_threshold = config['kl_threshold']
             self.scheduler = schedulers.AdaptiveScheduler(self.kl_threshold)
 
-        elif self.linear_lr:
+        elif config['lr_schedule'] == 'linear':
             
             if self.max_epochs == -1 and self.max_frames == -1:
                 print("Max epochs and max frames are not set. Linear learning rate schedule can't be used, switching to the contstant (identity) one.")
@@ -193,6 +192,12 @@ class A2CBase(BaseAlgorithm):
                     use_epochs = use_epochs, 
                     apply_to_entropy = config.get('schedule_entropy', False),
                     start_entropy_coef = config.get('entropy_coef'))
+                
+        elif config['lr_schedule'] == 'exponential':
+            assert 'lr_gamma' in config
+            self.scheduler = schedulers.ExponentialScheduler(float(config['learning_rate']),
+                                                             float(config['lr_gamma']))
+
         else:
             self.scheduler = schedulers.IdentityScheduler()
 
@@ -366,8 +371,6 @@ class A2CBase(BaseAlgorithm):
 
         self.writer.add_scalar('losses/entropy', torch_ext.mean_list(entropies).item(), frame)
         self.writer.add_scalar('info/last_lr', last_lr * lr_mul, frame)
-        # TODO add entropy
-        # self.writer.add_scalar('losses/entropy', torch_ext.mean_list(entropies).item(), frame)
         self.writer.add_scalar('info/lr_mul', lr_mul, frame)
         self.writer.add_scalar('info/e_clip', self.e_clip * lr_mul, frame)
         self.writer.add_scalar('info/kl', torch_ext.mean_list(kls).item(), frame)
