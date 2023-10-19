@@ -12,6 +12,7 @@ from rl_games.common.interval_summary_writer import IntervalSummaryWriter
 from rl_games.common.diagnostics import DefaultDiagnostics, PpoDiagnostics
 from rl_games.algos_torch import  model_builder
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
+from utils.rlgames_utils import Every
 import numpy as np
 import time
 import gym
@@ -462,6 +463,14 @@ class A2CBase(BaseAlgorithm):
             'use_action_masks' : self.use_action_masks
         }
         self.experience_buffer = ExperienceBuffer(self.env_info, algo_info, self.ppo_device)
+
+        algo_info = {
+            'num_actors' : self.vec_env.env.max_pix,
+            'horizon_length' : self.vec_env.env.max_episode_length,
+            'has_central_value' : self.has_central_value,
+            'use_action_masks' : self.use_action_masks
+        }
+        self.test_buffer = ExperienceBuffer(self.env_info, algo_info, self.ppo_device)
 
         val_shape = (self.horizon_length, batch_size, self.value_size)
         current_rewards_shape = (batch_size, self.value_size)
@@ -1082,8 +1091,6 @@ class DiscreteA2CBase(A2CBase):
                                 a_losses, c_losses, entropies, kls, last_lr, lr_mul, frame, 
                                 scaled_time, scaled_play_time, curr_frames)
 
-                self.algo_observer.after_print_stats(frame, epoch_num, total_time)
-
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()
                     mean_shaped_rewards = self.game_shaped_rewards.get_mean()
@@ -1317,6 +1324,36 @@ class ContinuousA2CBase(A2CBase):
             dataset_dict['rnn_masks'] = rnn_masks
             self.central_value_net.update_dataset(dataset_dict)
 
+    def test(self):
+        self.vec_env.env.test = True
+        self.vec_env.env.override_render = True
+        cut = self.vec_env.env.max_pix
+
+        update_list = self.update_list
+        for n in range(self.vec_env.env.max_episode_length):
+            if self.use_action_masks:
+                masks = self.vec_env.get_action_masks()
+                res_dict = self.get_masked_action_values(self.obs, masks)
+            else:
+                res_dict = self.get_action_values(self.obs)
+            
+            self.test_buffer.update_data('obses', n, self.obs['obs'][:cut])
+            self.test_buffer.update_data('dones', n, self.dones[:cut])
+
+            for k in update_list:
+                self.test_buffer.update_data(k, n, res_dict[k][:cut]) 
+            if self.has_central_value:
+                self.test_buffer.update_data('states', n, self.obs['states'][:cut])
+
+            self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
+
+            # Save images
+            all_done_indices = self.dones.nonzero(as_tuple=False)[::self.num_agents]
+            self.algo_observer.process_infos(infos, all_done_indices)
+
+        self.vec_env.env.test = False
+        self.vec_env.env.override_render = False
+
     def train(self):
         self.init_tensors()
         self.last_mean_rewards = -100500
@@ -1325,6 +1362,8 @@ class ContinuousA2CBase(A2CBase):
         rep_count = 0
         self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
+        self.test_every_episodes = 2
+        test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
 
         if self.multi_gpu:
             print("====================broadcasting parameters")
@@ -1435,3 +1474,9 @@ class ContinuousA2CBase(A2CBase):
 
             if should_exit:
                 return self.last_mean_rewards, epoch_num
+            
+            # Test
+            iteration = self.frame / self.num_actors
+            if test_check.check(iteration):
+                self.test()
+                self.algo_observer.after_print_stats(frame, epoch_num, total_time, 'test/')

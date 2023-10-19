@@ -95,6 +95,7 @@ class FrankaPushing(VecTask):
 
         self.im_size = self.cam_w = 128
         self.max_pix = 16
+        self.test = False
 
         # Create dicts to pass to reward function
         self.reward_settings = {}
@@ -532,14 +533,11 @@ class FrankaPushing(VecTask):
     def reset_idx(self, env_ids):
         env_ids_int32 = env_ids.to(dtype=torch.int32)
 
-        # Reset cubes, sampling cube B first, then A
-        # if not self._i:
         for j in range(self.n_cubes):
             self._reset_init_cube_state(cube=j, env_ids=env_ids, check_valid=j>0)
             # Write these new init states to the sim states
             self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
         self._reset_goal_state(env_ids=env_ids)
-        # self._i = True
 
         # Reset agent
         reset_noise = torch.rand((len(env_ids), 9), device=self.device)
@@ -653,6 +651,35 @@ class FrankaPushing(VecTask):
                                               2.0 * self.start_position_noise * (
                                                       torch.rand(num_resets, 3, device=self.device) - 0.5)
     
+        tasks = [] 
+        height = -0.08
+        # TODO switch top right and bottom left
+        center = np.array([.0, .0, height])
+        left = np.array([.0, -.08, height])
+        right = np.array([.0, .08, height])
+        bottom = np.array([.08, .0, height])
+        top = np.array([-.08, .0, height])
+        bottom_right = np.array([.08, .08, height])
+        bottom_left = np.array([.08, -.08, height])
+        top_right = np.array([-.08, .08, height])
+        top_left = np.array([-.08, -.08, height])
+        off = np.array([1, 1, 1])
+
+        tasks.append([top_left, left, off, off, off, off]) # 1 cube blocking way
+        tasks.append([top_left, left, center, off, off, off]) # 2 cubes blocking way
+        tasks.append([top_left, left, center, right, off, off]) # 3 cubes blocking way
+        tasks.append([top_left, bottom_left, off, off, off, off]) # 1 cube at the goal
+        tasks.append([top_left, top, center, left, bottom, right]) # star
+        tasks.append([top_left, bottom_right, left, bottom_left, bottom, center]) # 6 cubes blocking way
+        tasks.append([top_left, bottom_right, left, bottom_left, bottom, center]) # 6 cubes blocking way
+        tasks.append([top_left, bottom_right, left, bottom_left, bottom, center]) # 6 cubes blocking way
+        tasks.append([top_left, left, bottom_left, [-0.08, -0.08, 0.0], bottom, center]) # star + cube on top
+        tasks.append([[-0.08, -0.08, 0.0], left, bottom_left, top_left, bottom, center]) # star + red is on top
+
+        if self.test:
+            for t in range(len(tasks)):
+                for i in range(3):
+                    sampled_cube_state[t, i] = centered_cube_xy_state[i] + tasks[t][cube][i]
 
         # Sample rotation value
         if self.start_rotation_noise > 0:
@@ -692,6 +719,11 @@ class FrankaPushing(VecTask):
                                             2.0 * self.goal_position_noise * (
                                                     torch.rand(num_resets, 2, device=self.device) - 0.5)
         sampled_goal_state[:, 2] = centered_goal_xyz_state[2]
+
+        if self.test:
+            sampled_goal_state[:, 0] = centered_goal_xyz_state[0] + 0.08
+            sampled_goal_state[:, 1] = centered_goal_xyz_state[1] - 0.08
+            sampled_goal_state[:, 2] = centered_goal_xyz_state[2] 
 
         # Lastly, set these sampled values as the new init state
         self._goal_state[env_ids, :] = sampled_goal_state
@@ -754,7 +786,6 @@ class FrankaPushing(VecTask):
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self._effort_control))
 
     def post_physics_step(self):
-        self.progress_buf += 1
 
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
@@ -764,6 +795,7 @@ class FrankaPushing(VecTask):
         if self.render_this_step():
             self.compute_pixel_obs()
         self.compute_reward(self.actions)
+        self.progress_buf += 1
 
         # Extra logging
         if 'images' in self.extras:

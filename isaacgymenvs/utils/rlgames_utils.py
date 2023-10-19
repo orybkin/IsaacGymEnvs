@@ -210,7 +210,7 @@ class RLGPUAlgoObserver(AlgoObserver):
                 if isinstance(v, float) or isinstance(v, int) or (isinstance(v, torch.Tensor) and len(v.shape) == 0):
                     self.direct_info[k] = v
 
-    def after_print_stats(self, frame, epoch_num, total_time):
+    def after_print_stats(self, frame, epoch_num, total_time, phase=''):
         if self.ep_infos:
             for key in self.ep_infos[0]:
                 infotensor = torch.tensor([], device=self.algo.device)
@@ -222,36 +222,37 @@ class RLGPUAlgoObserver(AlgoObserver):
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.algo.device)))
                 value = torch.mean(infotensor)
-                self.writer.add_scalar('Episode/' + key, value, epoch_num)
+                self.writer.add_scalar('Episode/' + phase + key, value, epoch_num)
             self.ep_infos.clear()
         
         # log these if and only if we have new finished episodes
         if self.new_finished_episodes:
             for key in self.episode_cumulative_avg:
-                self.writer.add_scalar(f'episode_cumulative/{key}', np.mean(self.episode_cumulative_avg[key]), frame)
-                self.writer.add_scalar(f'episode_cumulative_min/{key}_min', np.min(self.episode_cumulative_avg[key]), frame)
-                self.writer.add_scalar(f'episode_cumulative_max/{key}_max', np.max(self.episode_cumulative_avg[key]), frame)
+                self.writer.add_scalar(f'episode_cumulative{phase}/{key}', np.mean(self.episode_cumulative_avg[key]), frame)
+                self.writer.add_scalar(f'episode_cumulative_min{phase}/{key}_min', np.min(self.episode_cumulative_avg[key]), frame)
+                self.writer.add_scalar(f'episode_cumulative_max{phase}/{key}_max', np.max(self.episode_cumulative_avg[key]), frame)
             for metric, value in self.episode_episodic_stats.items():
                 for stat, scalar in value.items():
-                    self.writer.add_scalar(f'episode_episodic_stats/{metric}_{stat}', np.mean(scalar), frame)
+                    self.writer.add_scalar(f'episode_episodic_stats{phase}/{metric}_{stat}', np.mean(scalar), frame)
             self.new_finished_episodes = False
 
             if self.videos:
-                self.writer.add_video('execution', np.stack(self.videos, 1))
-                self.writer.add_images('start', self.videos[1])
-                self.writer.add_images('end', self.videos[-1])
+                import pdb; pdb.set_trace()
+                self.writer.add_video('execution' + phase, np.stack(self.videos, 1))
+                self.writer.add_images('start'+ phase, self.videos[1])
+                self.writer.add_images('end'+ phase, self.videos[-1])
                 from tensorboardX.utils import _prepare_video
                 import imageio
                 import torchvision
-                imageio.mimwrite('eval.gif', (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8))
-                imageio.imwrite('eval_start.png', (torchvision.utils.make_grid(torch.tensor(self.videos[1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
-                imageio.imwrite('eval_end.png', (torchvision.utils.make_grid(torch.tensor(self.videos[-1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
+                imageio.mimwrite(f'eval{phase[:-1]}.gif', (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8))
+                imageio.imwrite(f'eval_start{phase[:-1]}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
+                imageio.imwrite(f'eval_end{phase[:-1]}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[-1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
                 self.videos = []
 
         for k, v in self.direct_info.items():
-            self.writer.add_scalar(f'{k}/frame', v, frame)
-            self.writer.add_scalar(f'{k}/iter', v, epoch_num)
-            self.writer.add_scalar(f'{k}/time', v, total_time)
+            self.writer.add_scalar(f'{k}{phase}/frame', v, frame)
+            self.writer.add_scalar(f'{k}{phase}/iter', v, epoch_num)
+            self.writer.add_scalar(f'{k}{phase}/time', v, total_time)
 
 
 class MultiObserver(AlgoObserver):
@@ -280,8 +281,8 @@ class MultiObserver(AlgoObserver):
     def after_clear_stats(self):
         self._call_multi('after_clear_stats')
 
-    def after_print_stats(self, frame, epoch_num, total_time):
-        self._call_multi('after_print_stats', frame, epoch_num, total_time)
+    def after_print_stats(self, frame, epoch_num, total_time, phase=''):
+        self._call_multi('after_print_stats', frame, epoch_num, total_time, phase=phase)
 
 
 class RLGPUEnv(vecenv.IVecEnv):
@@ -465,3 +466,18 @@ class ComplexObsRLGPUEnv(vecenv.IVecEnv):
     def set_env_state(self, env_state):
         if hasattr(self.env, 'set_env_state'):
             self.env.set_env_state(env_state)                
+
+
+class Every:
+    def __init__(self, every):
+        self.every = every
+        self.last_true = 0
+
+    def check(self, i):
+        if (i - self.last_true) >= self.every:
+            self.last_true = i
+            return True
+        else:
+            return False
+
+

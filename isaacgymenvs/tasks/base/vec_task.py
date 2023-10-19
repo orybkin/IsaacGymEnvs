@@ -116,6 +116,7 @@ class Env(ABC):
         self.clip_actions = config["env"].get("clipActions", np.Inf)
 
         self.render_every_episodes = config["env"].get("renderEveryEpisodes", 1)
+        self.override_render = False
 
         # Total number of training frames since the beginning of the experiment.
         # We get this information from the learning algorithm rather than tracking ourselves.
@@ -270,8 +271,9 @@ class VecTask(Env):
         self.obs_dict = {}
 
     def render_this_step(self):
-        episode_n = self.control_steps // self.max_episode_length 
-        return episode_n % self.render_every_episodes == 0 and self.enable_camera_sensors
+        return self.override_render
+        # episode_n = self.control_steps // self.max_episode_length 
+        # return episode_n % self.render_every_episodes == 0 and self.enable_camera_sensors
 
     def set_viewer(self):
         """Create the viewer."""
