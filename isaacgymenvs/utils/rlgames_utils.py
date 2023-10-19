@@ -140,8 +140,8 @@ class RLGPUAlgoObserver(AlgoObserver):
 
         self.episode_cumulative = dict()
         self.episode_cumulative_avg = dict()
-        self.episode_episodic = dict()
-        self.episode_episodic_stats = dict()
+        self.episodic = dict()
+        self.episodic_stats = dict()
         self.videos = []
         self.new_finished_episodes = False
 
@@ -177,27 +177,25 @@ class RLGPUAlgoObserver(AlgoObserver):
                     self.episode_cumulative_avg[key].append(self.episode_cumulative[key][done_idx].item())
                     self.episode_cumulative[key][done_idx] = 0
 
-        if 'episode_episodic' in infos:
-            for key, value in infos['episode_episodic'].items():
-                if key not in self.episode_episodic:
-                    self.episode_episodic[key] = []
-                self.episode_episodic[key].append(value.cpu().numpy())
-
-            # TODO assert done_indices all or nothing
+        if 'episodic' in infos:
+            for key, value in infos['episodic'].items():
+                if key not in self.episodic:
+                    self.episodic[key] = []
+                self.episodic[key].append(value.cpu().numpy())
 
             if len(done_indices) > 0:
                 self.new_finished_episodes = True
 
-                for key, value in infos['episode_episodic'].items():
-                    if key not in self.episode_episodic_stats:
-                        self.episode_episodic_stats[key] = dict()
+                for key, value in infos['episodic'].items():
+                    if key not in self.episodic_stats:
+                        self.episodic_stats[key] = dict()
 
-                    data = np.stack(self.episode_episodic[key])
-                    self.episode_episodic_stats[key]['avg'] = data.mean(0)
-                    self.episode_episodic_stats[key]['min'] = data.min(0)
-                    self.episode_episodic_stats[key]['max'] = data.max(0)
-                    self.episode_episodic_stats[key]['last'] = data[-1]
-                    self.episode_episodic[key] = []
+                    data = np.stack(self.episodic[key])
+                    self.episodic_stats[key]['avg'] = data.mean(0)
+                    self.episodic_stats[key]['min'] = data.min(0)
+                    self.episodic_stats[key]['max'] = data.max(0)
+                    self.episodic_stats[key]['last'] = data[-1]
+                    self.episodic[key] = []
                 
                 assert len(done_indices) == data.shape[1]
 
@@ -207,6 +205,7 @@ class RLGPUAlgoObserver(AlgoObserver):
             self.direct_info = {}
             for k, v in infos_flat.items():
                 # only log scalars
+                if 'episodic' in k: continue
                 if isinstance(v, float) or isinstance(v, int) or (isinstance(v, torch.Tensor) and len(v.shape) == 0):
                     self.direct_info[k] = v
 
@@ -222,7 +221,7 @@ class RLGPUAlgoObserver(AlgoObserver):
                         ep_info[key] = ep_info[key].unsqueeze(0)
                     infotensor = torch.cat((infotensor, ep_info[key].to(self.algo.device)))
                 value = torch.mean(infotensor)
-                self.writer.add_scalar('Episode/' + phase + key, value, epoch_num)
+                self.writer.add_scalar('Episode' + phase + '/' + key, value, epoch_num)
             self.ep_infos.clear()
         
         # log these if and only if we have new finished episodes
@@ -231,22 +230,23 @@ class RLGPUAlgoObserver(AlgoObserver):
                 self.writer.add_scalar(f'episode_cumulative{phase}/{key}', np.mean(self.episode_cumulative_avg[key]), frame)
                 self.writer.add_scalar(f'episode_cumulative_min{phase}/{key}_min', np.min(self.episode_cumulative_avg[key]), frame)
                 self.writer.add_scalar(f'episode_cumulative_max{phase}/{key}_max', np.max(self.episode_cumulative_avg[key]), frame)
-            for metric, value in self.episode_episodic_stats.items():
+            for metric, value in self.episodic_stats.items():
                 for stat, scalar in value.items():
-                    self.writer.add_scalar(f'episode_episodic_stats{phase}/{metric}_{stat}', np.mean(scalar), frame)
+                    self.writer.add_scalar(f'episodic_stats{phase}/{metric}_{stat}', np.mean(scalar), frame)
+            self.episodic_stats = dict()
+
             self.new_finished_episodes = False
 
             if self.videos:
-                import pdb; pdb.set_trace()
                 self.writer.add_video('execution' + phase, np.stack(self.videos, 1))
-                self.writer.add_images('start'+ phase, self.videos[1])
-                self.writer.add_images('end'+ phase, self.videos[-1])
+                self.writer.add_images('start' + phase, self.videos[1])
+                self.writer.add_images('end' + phase, self.videos[-1])
                 from tensorboardX.utils import _prepare_video
                 import imageio
                 import torchvision
-                imageio.mimwrite(f'eval{phase[:-1]}.gif', (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8))
-                imageio.imwrite(f'eval_start{phase[:-1]}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
-                imageio.imwrite(f'eval_end{phase[:-1]}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[-1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
+                imageio.mimwrite(f'eval{phase}.gif', (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8))
+                imageio.imwrite(f'eval_start{phase}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
+                imageio.imwrite(f'eval_end{phase}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[-1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
                 self.videos = []
 
         for k, v in self.direct_info.items():

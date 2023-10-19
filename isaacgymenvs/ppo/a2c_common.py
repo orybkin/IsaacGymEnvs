@@ -1479,4 +1479,4 @@ class ContinuousA2CBase(A2CBase):
             iteration = self.frame / self.num_actors
             if test_check.check(iteration):
                 self.test()
-                self.algo_observer.after_print_stats(frame, epoch_num, total_time, 'test/')
+                self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')
