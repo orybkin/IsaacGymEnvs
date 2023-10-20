@@ -18,6 +18,9 @@ env:
   frankaRotationNoise: 0.0
   frankaDofNoise: 0.25
 
+  distRewardScale: 1
+  distRewardDropoff: 30
+
   aggregateMode: 3
 
   actionScale: 1.0
