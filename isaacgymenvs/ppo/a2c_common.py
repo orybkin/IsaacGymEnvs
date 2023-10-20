@@ -242,18 +242,22 @@ class A2CBase(BaseAlgorithm):
         self.game_shaped_rewards = torch_ext.AverageMeter(self.value_size, self.games_to_track).to(self.ppo_device)
         self.game_lengths = torch_ext.AverageMeter(1, self.games_to_track).to(self.ppo_device)
         self.obs = None
-        self.games_num = self.config['minibatch_size'] // self.seq_length # it is used only for current rnn implementation
 
         self.batch_size = self.horizon_length * self.num_actors * self.num_agents
         self.batch_size_envs = self.horizon_length * self.num_actors
 
-        assert(('minibatch_size_per_env' in self.config) or ('minibatch_size' in self.config))
-        self.minibatch_size_per_env = self.config.get('minibatch_size_per_env', 0)
-        self.minibatch_size = self.config.get('minibatch_size', self.num_actors * self.minibatch_size_per_env)
+        if 'num_minibatches' in self.config:
+            self.num_minibatches = self.config['num_minibatches']
+            self.minibatch_size = self.batch_size // self.num_minibatches
+        else:
+            assert(('minibatch_size_per_env' in self.config) or ('minibatch_size' in self.config))
+            self.minibatch_size_per_env = self.config.get('minibatch_size_per_env', 0)
+            self.minibatch_size = self.config.get('minibatch_size', self.num_actors * self.minibatch_size_per_env)
 
-        self.num_minibatches = self.batch_size // self.minibatch_size
+            self.num_minibatches = self.batch_size // self.minibatch_size
         assert(self.batch_size % self.minibatch_size == 0)
 
+        self.games_num = self.minibatch_size // self.seq_length # it is used only for current rnn implementation
         self.mini_epochs_num = self.config['mini_epochs']
 
         self.mixed_precision = self.config.get('mixed_precision', False)
