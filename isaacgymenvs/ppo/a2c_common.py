@@ -1324,9 +1324,10 @@ class ContinuousA2CBase(A2CBase):
             dataset_dict['rnn_masks'] = rnn_masks
             self.central_value_net.update_dataset(dataset_dict)
 
-    def test(self):
+    def test(self, render):
         self.vec_env.env.test = True
-        self.vec_env.env.override_render = True
+        if render:
+            self.vec_env.env.override_render = True
         cut = self.vec_env.env.max_pix
 
         update_list = self.update_list
@@ -1352,7 +1353,8 @@ class ContinuousA2CBase(A2CBase):
             self.algo_observer.process_infos(infos, all_done_indices)
 
         self.vec_env.env.test = False
-        self.vec_env.env.override_render = False
+        if render:
+            self.vec_env.env.override_render = False
 
     def train(self):
         self.init_tensors()
@@ -1362,8 +1364,9 @@ class ContinuousA2CBase(A2CBase):
         rep_count = 0
         self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
-        self.test_every_episodes = 2
+        self.test_every_episodes = 10
         test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
+        render_check = Every(self.vec_env.env.render_every_episodes * self.vec_env.env.max_episode_length)
 
         if self.multi_gpu:
             print("====================broadcasting parameters")
@@ -1478,5 +1481,5 @@ class ContinuousA2CBase(A2CBase):
             # Test
             iteration = self.frame / self.num_actors
             if test_check.check(iteration):
-                self.test()
+                self.test(render=render_check.check(iteration))
                 self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')

@@ -92,6 +92,8 @@ class FrankaPushing(VecTask):
         self.franka_dof_noise = self.cfg["env"]["frankaDofNoise"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
         self.n_cubes = self.cfg["env"]["nCubes"]
+        self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
+        self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
 
         self.im_size = self.cam_w = 128
         self.max_pix = 16
@@ -505,7 +507,8 @@ class FrankaPushing(VecTask):
 
     def compute_reward(self, actions):
         self.rew_buf[:], self.reset_buf[:] = compute_franka_reward(
-            self.reset_buf, self.progress_buf, self.actions, self.states, self.reward_settings, self.max_episode_length
+            self.reset_buf, self.progress_buf, self.actions, self.states, self.reward_settings,
+              self.max_episode_length, self.dist_reward_scale, self.dist_reward_dropoff
         )
 
     def compute_observations(self):
@@ -810,7 +813,7 @@ class FrankaPushing(VecTask):
             for i in range(self.max_pix):
                 metrics[f"goal_dist_{i}"] = torch.norm(self.states["goal_pos"] - self.states["cube0_pos"], dim=-1)[i]
                 metrics[f"success@4_{i}"] = torch.norm(self.states["goal_pos"] - self.states["cube0_pos"], dim=-1)[i] < 0.04
-                metrics[f"success@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states["cube0_pos"], dim=-1) < 0.02
+                metrics[f"success@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states["cube0_pos"], dim=-1)[i] < 0.02
         self.extras["episodic"] = metrics
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
@@ -848,13 +851,13 @@ class FrankaPushing(VecTask):
 
 @torch.jit.script
 def compute_franka_reward(
-    reset_buf, progress_buf, actions, states, reward_settings, max_episode_length
+    reset_buf, progress_buf, actions, states, reward_settings, max_episode_length, dist_reward_scale, dist_reward_dropoff,
 ):
-    # type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float) -> Tuple[Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float, float, float) -> Tuple[Tensor, Tensor]
 
     # distance from cube to the goal
     d = torch.norm(states["goal_pos"] - states["cube0_pos"], dim=-1)
-    dist_reward = 1 - torch.tanh(30.0 * d)
+    dist_reward = dist_reward_scale * (1 - torch.tanh(dist_reward_dropoff * d))
 
     # Compute resets
     reset_buf = torch.where((progress_buf >= max_episode_length - 1), torch.ones_like(reset_buf), reset_buf)

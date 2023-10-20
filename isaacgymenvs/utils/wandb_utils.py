@@ -1,4 +1,4 @@
-from rl_games.common.algo_observer import AlgoObserver
+from isaacgymenvs.ppo.algo_observer import AlgoObserver
 
 from isaacgymenvs.utils.utils import retry
 from isaacgymenvs.utils.reformat import omegaconf_to_dict

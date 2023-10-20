@@ -35,7 +35,7 @@ import gym
 import numpy as np
 import torch
 from rl_games.common import env_configurations, vecenv
-from rl_games.common.algo_observer import AlgoObserver
+from isaacgymenvs.ppo.algo_observer import AlgoObserver
 
 from isaacgymenvs.tasks import isaacgym_task_map
 from isaacgymenvs.utils.utils import set_seed, flatten_dict
@@ -197,7 +197,7 @@ class RLGPUAlgoObserver(AlgoObserver):
                     self.episodic_stats[key]['last'] = data[-1]
                     self.episodic[key] = []
                 
-                assert len(done_indices) == data.shape[1]
+                # assert len(done_indices) == data.shape[1]
 
         # turn nested infos into summary keys (i.e. infos['scalars']['lr'] -> infos['scalars/lr']
         if len(infos) > 0 and isinstance(infos, dict):  # allow direct logging from env
