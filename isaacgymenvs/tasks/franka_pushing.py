@@ -638,7 +638,7 @@ class FrankaPushing(VecTask):
                                                              torch.rand_like(sampled_cube_state[active_idx, :3]) - 0.5)
                 # Check if sampled values are valid
 
-                cube_dist = torch.linalg.norm(sampled_cube_state[None,:, :3] - previous_cube_states[:, :, :3], dim=-1)
+                cube_dist = torch.linalg.norm(sampled_cube_state[None, :, :3] - previous_cube_states[:, :, :3], dim=-1)
                 active_idx = torch.nonzero((cube_dist < min_dists).sum(0), as_tuple=True)[0]
                 num_active_idx = len(active_idx)
                 # If active idx is empty, then all sampling is valid :D
