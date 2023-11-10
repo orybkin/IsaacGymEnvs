@@ -94,10 +94,14 @@ class FrankaPushing(VecTask):
         self.n_cubes = self.cfg["env"]["nCubes"]
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
+        self.dist_reward_threshold  = self.cfg["env"]["distRewardThreshold"]
 
         self.im_size = self.cam_w = 128
         self.max_pix = 16
         self.test = False
+
+        self.target_idx = [14,15,16]
+        self.target_name = 'cube0_pos'
 
         # Create dicts to pass to reward function
         self.reward_settings = {}
@@ -505,12 +509,6 @@ class FrankaPushing(VecTask):
         # Refresh states
         self._update_states()
 
-    def compute_reward(self, actions):
-        self.rew_buf[:], self.reset_buf[:] = compute_franka_reward(
-            self.reset_buf, self.progress_buf, self.actions, self.states, self.reward_settings,
-              self.max_episode_length, self.dist_reward_scale, self.dist_reward_dropoff
-        )
-
     def compute_observations(self):
         self._refresh()
         obs = ["eef_pos", "eef_quat", "goal_pos"]
@@ -789,16 +787,20 @@ class FrankaPushing(VecTask):
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self._effort_control))
 
     def post_physics_step(self):
+        # Increment counter
+        self.rew_buf[:] = self.compute_franka_reward(self.states)
+        self.progress_buf += 1
+        self.reset_buf[:] = torch.where((self.progress_buf >= self.max_episode_length), torch.ones_like(self.reset_buf), self.reset_buf)
+        self.done = self.reset_buf.clone()
 
+        # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
             self.reset_idx(env_ids)
-
+        # Produce observation
         self.compute_observations()
         if self.render_this_step():
             self.compute_pixel_obs()
-        self.compute_reward(self.actions)
-        self.progress_buf += 1
 
         # Extra logging
         if 'images' in self.extras:
@@ -844,22 +846,15 @@ class FrankaPushing(VecTask):
         #             self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], py[0], py[1], py[2]], [0.1, 0.85, 0.1])
         #             self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], pz[0], pz[1], pz[2]], [0.1, 0.1, 0.85])
 
-#####################################################################
-###=========================jit functions=========================###
-#####################################################################
+    def compute_franka_reward(self, states):
+        ## type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float, float, float, float) -> Tuple[Tensor, Tensor]
 
+        # distance from cube to the goal
+        d = torch.norm(states["goal_pos"] - states["cube0_pos"], dim=-1)
+        if self.dist_reward_threshold:
+            dist_reward = torch.where(d < self.dist_reward_threshold, torch.ones_like(d), torch.zeros_like(d))
+        else:
+            dist_reward = 1 - torch.tanh(self.dist_reward_dropoff * d)
 
-@torch.jit.script
-def compute_franka_reward(
-    reset_buf, progress_buf, actions, states, reward_settings, max_episode_length, dist_reward_scale, dist_reward_dropoff,
-):
-    # type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float, float, float) -> Tuple[Tensor, Tensor]
+        return self.dist_reward_scale * dist_reward
 
-    # distance from cube to the goal
-    d = torch.norm(states["goal_pos"] - states["cube0_pos"], dim=-1)
-    dist_reward = dist_reward_scale * (1 - torch.tanh(dist_reward_dropoff * d))
-
-    # Compute resets
-    reset_buf = torch.where((progress_buf >= max_episode_length - 1), torch.ones_like(reset_buf), reset_buf)
-
-    return dist_reward, reset_buf

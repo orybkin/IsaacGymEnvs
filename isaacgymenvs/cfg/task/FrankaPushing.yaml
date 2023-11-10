@@ -20,6 +20,7 @@ env:
 
   distRewardScale: 1
   distRewardDropoff: 30
+  distRewardThreshold: 0.0
 
   aggregateMode: 3
 
