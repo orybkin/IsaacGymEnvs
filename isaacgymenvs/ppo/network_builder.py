@@ -200,6 +200,10 @@ class A2CBuilder(NetworkBuilder):
             self.critic_cnn = nn.Sequential()
             self.actor_mlp = nn.Sequential()
             self.critic_mlp = nn.Sequential()
+            if self.two_critics:
+                self.critic2_mlp = nn.Sequential()
+                assert not self.separate
+                assert not self.central_value
             
             if self.has_cnn:
                 if self.permute_input:
@@ -259,6 +263,8 @@ class A2CBuilder(NetworkBuilder):
                 self.critic_mlp = self._build_mlp(**mlp_args)
 
             self.value = self._build_value_layer(out_size, self.value_size)
+            if self.two_critics:
+                self.value2 = self._build_value_layer(out_size, self.value_size)
             self.value_act = self.activations_factory.create(self.value_activation)
 
             if self.is_discrete:
@@ -301,7 +307,7 @@ class A2CBuilder(NetworkBuilder):
                 else:
                     sigma_init(self.sigma.weight)  
 
-        def forward(self, obs_dict):
+        def forward(self, obs_dict, value_index=0):
             obs = obs_dict['obs']
             states = obs_dict.get('rnn_states', None)
             dones = obs_dict.get('dones', None)
@@ -433,6 +439,8 @@ class A2CBuilder(NetworkBuilder):
                 else:
                     out = self.actor_mlp(out)
                 value = self.value_act(self.value(out))
+                if self.two_critics and value_index == 1:
+                    value = self.value_act(self.value2(out))
 
                 if self.central_value:
                     return value, states
@@ -492,6 +500,7 @@ class A2CBuilder(NetworkBuilder):
             self.normalization = params.get('normalization', None)
             self.has_rnn = 'rnn' in params
             self.has_space = 'space' in params
+            self.two_critics = params.get('two_critics', False)
             self.central_value = params.get('central_value', False)
             self.joint_obs_actions_config = params.get('joint_obs_actions', None)
 
