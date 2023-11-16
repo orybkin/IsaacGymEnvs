@@ -1,5 +1,4 @@
 from rl_games.common import object_factory
-import rl_games.algos_torch
 from isaacgymenvs.ppo import network_builder
 from isaacgymenvs.ppo import models
 

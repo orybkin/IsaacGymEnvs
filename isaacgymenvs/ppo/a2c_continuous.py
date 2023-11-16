@@ -53,6 +53,8 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
 
         self.use_experimental_cv = self.config.get('use_experimental_cv', True)
         self.dataset = datasets.PPODataset(self.batch_size, self.minibatch_size, self.is_discrete, self.is_rnn, self.ppo_device, self.seq_length)
+        if self.relabel:
+            self.relabeled_dataset = datasets.PPODataset(self.batch_size, self.minibatch_size, self.is_discrete, self.is_rnn, self.ppo_device, self.seq_length)
         if self.normalize_value:
             self.value_mean_std = self.central_value_net.model.value_mean_std if self.has_central_value else self.model.value_mean_std
 
@@ -74,7 +76,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
     def get_masked_action_values(self, obs, action_masks):
         assert False
 
-    def calc_gradients(self, input_dict):
+    def train_actor_critic(self, input_dict, relabeled_dict=None):
         value_preds_batch = input_dict['old_values']
         old_action_log_probs_batch = input_dict['old_logp_actions']
         advantage = input_dict['advantages']
@@ -135,8 +137,8 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
                     param.grad = None
 
         self.scaler.scale(loss).backward()
-        #TODO: Refactor this ugliest code of they year
-        self.trancate_gradients_and_step()
+        #TODO: Refactor this ugliest code of the year
+        self.truncate_gradients_and_step()
 
         with torch.no_grad():
             reduce_kl = rnn_masks is None
@@ -153,13 +155,10 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             'masks' : rnn_masks
         }, curr_e_clip, 0)      
 
-        self.train_result = (a_loss, c_loss, entropy, \
-            kl_dist, self.last_lr, lr_mul, \
-            mu.detach(), sigma.detach(), b_loss)
-
-    def train_actor_critic(self, input_dict):
-        self.calc_gradients(input_dict)
-        return self.train_result
+        losses_dict = {'a_loss': a_loss, 'c_loss': c_loss, 'entropy': entropy}
+        if self.bounds_loss_coef is not None:
+            losses_dict['bounds_loss'] = b_loss
+        return losses_dict, kl_dist, self.last_lr, lr_mul, mu.detach(), sigma.detach()
 
     def reg_loss(self, mu):
         if self.bounds_loss_coef is not None:
