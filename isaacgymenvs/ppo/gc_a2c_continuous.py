@@ -25,6 +25,7 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
     def train_actor_critic(self, original_dict, relabeled_dict):
         loss = [0, 0]
         losses_dict = {}
+        diagnostics = {}
         for i, input_dict in enumerate([original_dict, relabeled_dict]):
             value_preds_batch = input_dict['old_values']
             old_action_log_probs_batch = input_dict['old_logp_actions']
@@ -89,18 +90,15 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
             losses_dict.update({f'a_loss{identifier}': a_loss, f'c_loss{identifier}': c_loss, f'entropy{identifier}': entropy})
             if self.bounds_loss_coef is not None:
                 losses_dict[f'bounds_loss{identifier}'] = b_loss
+            diagnostics.update({
+                f'explained_variance{identifier}': torch_ext.explained_variance(value_preds_batch, return_batch, rnn_masks).detach(),
+                f'clipped_fraction{identifier}': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach()
+            })
 
         self.scaler.scale(loss[0] + loss[1]).backward()
         #TODO: Refactor this ugliest code of the year
         self.truncate_gradients_and_step()
 
-        self.diagnostics.mini_batch(self,
-        {
-            'values' : value_preds_batch,
-            'returns' : return_batch,
-            'new_neglogp' : action_log_probs,
-            'old_neglogp' : old_action_log_probs_batch,
-            'masks' : rnn_masks
-        }, self.e_clip, 0)      
+        self.diagnostics.mini_batch(self, diagnostics)      
 
         return losses_dict, kl_dist, self.last_lr, lr_mul, mu.detach(), sigma.detach()

@@ -46,6 +46,7 @@ params:
     lr_schedule: fixed
     relabel: False
 
+    use_diagnostics: True
     ppo: True
     mixed_precision: False
     normalize_input: True

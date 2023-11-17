@@ -145,15 +145,12 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, reduce_kl)
             if rnn_masks is not None:
                 kl_dist = (kl_dist * rnn_masks).sum() / rnn_masks.numel()  #/ sum_mask
-
-        self.diagnostics.mini_batch(self,
+        
+        self.diagnostics.mini_batch(self, 
         {
-            'values' : value_preds_batch,
-            'returns' : return_batch,
-            'new_neglogp' : action_log_probs,
-            'old_neglogp' : old_action_log_probs_batch,
-            'masks' : rnn_masks
-        }, curr_e_clip, 0)      
+            'explained_variance': torch_ext.explained_variance(value_preds_batch, return_batch, rnn_masks).detach(),
+            'clipped_fraction': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach()
+        })  
 
         losses_dict = {'a_loss': a_loss, 'c_loss': c_loss, 'entropy': entropy}
         if self.bounds_loss_coef is not None:
