@@ -32,25 +32,18 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
             old_mu_batch = input_dict['mu']
             old_sigma_batch = input_dict['sigma']
             return_batch = input_dict['returns']
-            actions_batch = input_dict['actions']
-            obs_batch = input_dict['obs']
-            obs_batch = self._preproc_obs(obs_batch)
-
-            lr_mul = 1.0
-            curr_e_clip = self.e_clip
-
             batch_dict = {
                 'is_train': True,
-                'prev_actions': actions_batch, 
-                'obs' : obs_batch,
+                'prev_actions': input_dict['actions'], 
+                'obs' : self._preproc_obs(input_dict['obs']),
             }
+            lr_mul = 1.0
 
             rnn_masks = None
             if self.is_rnn:
                 rnn_masks = input_dict['rnn_masks']
                 batch_dict['rnn_states'] = input_dict['rnn_states']
                 batch_dict['seq_length'] = self.seq_length
-
                 if self.zero_rnn_on_done:
                     batch_dict['dones'] = input_dict['dones']            
 
@@ -62,10 +55,10 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 mu = res_dict['mus']
                 sigma = res_dict['sigmas']
 
-                a_loss = self.actor_loss_func[i](old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
+                a_loss = self.actor_loss_func[i](old_action_log_probs_batch, action_log_probs, advantage, self.ppo, self.e_clip)
 
                 if self.has_value_loss:
-                    c_loss = common_losses.critic_loss(self.model,value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+                    c_loss = common_losses.critic_loss(self.model, value_preds_batch, values, self.e_clip, return_batch, self.clip_value)
                 else:
                     c_loss = torch.zeros(1, device=self.ppo_device)
                 if self.bound_loss_type == 'regularisation':
@@ -108,6 +101,6 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
             'new_neglogp' : action_log_probs,
             'old_neglogp' : old_action_log_probs_batch,
             'masks' : rnn_masks
-        }, curr_e_clip, 0)      
+        }, self.e_clip, 0)      
 
         return losses_dict, kl_dist, self.last_lr, lr_mul, mu.detach(), sigma.detach()

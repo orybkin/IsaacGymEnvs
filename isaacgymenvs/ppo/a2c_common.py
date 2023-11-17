@@ -46,25 +46,19 @@ def rescale_actions(low, high, action):
     return scaled_action
 
 
-def print_statistics(print_stats, curr_frames, step_time, step_inference_time, total_time, epoch_num, max_epochs, frame, max_frames):
+def print_statistics(print_stats, curr_frames, step_time, step_inference_time, total_time, epoch_num, max_epochs, frame, max_frames, rewards):
     if print_stats:
         step_time = max(step_time, 1e-9)
         fps_step = curr_frames / step_time
         fps_step_inference = curr_frames / step_inference_time
         fps_total = curr_frames / total_time
 
-        if max_epochs == -1 and max_frames == -1:
-            print(f'fps step: {fps_step:.0f} fps step and policy inference: {fps_step_inference:.0f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f} frames: {frame:.0f}')
-        elif max_epochs == -1:
-            print(f'fps step: {fps_step:.0f} fps step and policy inference: {fps_step_inference:.0f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f} frames: {frame:.0f}/{max_frames:.0f}')
-        elif max_frames == -1:
-            print(f'fps step: {fps_step:.0f} fps step and policy inference: {fps_step_inference:.0f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}/{max_epochs:.0f} frames: {frame:.0f}')
-        else:
-            print(f'fps step: {fps_step:.0f} fps step and policy inference: {fps_step_inference:.0f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}/{max_epochs:.0f} frames: {frame:.0f}/{max_frames:.0f}')
+        ep_str = f'/{max_epochs:.0f}' if max_epochs != -1 else ''
+        fr_str = f'/{max_frames:.0f}' if max_frames != -1 else ''
+        print(f'rewards: {rewards:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str} frames: {frame:.0f}{fr_str}')
 
 
 def awr_loss(old_action_neglog_probs_batch, action_neglog_probs, advantage, is_ppo, curr_e_clip, temperature):
-    # TODO are advantages normalized?
     a_loss = action_neglog_probs * torch.clamp((advantage / temperature).exp(), max=20)
 
     return a_loss
@@ -1230,13 +1224,17 @@ class ContinuousA2CBase(A2CBase):
         goal = obs[:, :, env.target_idx]
         idx = idx.repeat(1, 1, goal.shape[2])
         goal = torch.gather(goal, 0, idx)
-        # import pdb; pdb.set_trace() 
-        # old_goal = torch.gather(obs[:, :, 7:10], 0, idx)       
-        # comp = (relabeled_buffer.tensor_dict['obses'][:, :, 7:10] == old_goal); comp.sum() / np.prod(comp.shape)
+        # debug = True
+        # if debug:
+        #     old_goal = torch.gather(obs[:, :, 7:10], 0, idx)       
+        #     comp = (relabeled_buffer.tensor_dict['obses'][:, :, 7:10] == old_goal); comp.sum() / np.prod(comp.shape)
+        #     assert comp.all()
         # Note - these are specific to franka pushing
         relabeled_buffer.tensor_dict['obses'][:, :, 7:10] = goal
         target_pos = relabeled_buffer.tensor_dict['obses'][..., env.target_idx]
         relabeled_buffer.tensor_dict['rewards'] = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
+        # if debug:
+        #     rew = relabeled_buffer.tensor_dict['rewards']
         # Get obs - do it in slices to conserve memory
         n_slices = 16
         obs = relabeled_buffer.tensor_dict['obses'].reshape([n_slices, -1] + list(obs.shape[1:]))
@@ -1258,7 +1256,7 @@ class ContinuousA2CBase(A2CBase):
         mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
         mb_returns = mb_advs + mb_values
 
-        relabeled_batch = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
+        relabeled_batch = relabeled_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
         relabeled_batch['returns'] = swap_and_flatten01(mb_returns)
         relabeled_batch['played_frames'] = self.batch_size
 
