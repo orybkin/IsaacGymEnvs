@@ -1464,9 +1464,6 @@ class ContinuousA2CBase(A2CBase):
                 curr_frames = self.curr_frames * self.world_size if self.multi_gpu else self.curr_frames
                 self.frame += curr_frames
 
-                print_statistics(self.print_stats, curr_frames, step_time, scaled_play_time, scaled_time, 
-                                epoch_num, self.max_epochs, frame, self.max_frames)
-
                 self.write_stats(total_time, epoch_num, step_time, play_time, update_time,
                                 metrics, last_lr, lr_mul, frame,
                                 scaled_time, scaled_play_time, curr_frames)
@@ -1480,6 +1477,9 @@ class ContinuousA2CBase(A2CBase):
                     mean_shaped_rewards = self.game_shaped_rewards.get_mean()
                     mean_lengths = self.game_lengths.get_mean()
                     self.mean_rewards = mean_rewards[0]
+
+                    print_statistics(self.print_stats, curr_frames, step_time, scaled_play_time, scaled_time, 
+                                    epoch_num, self.max_epochs, frame, self.max_frames, mean_rewards[0])
 
                     for i in range(self.value_size):
                         rewards_name = 'rewards' if i == 0 else 'rewards{0}'.format(i)

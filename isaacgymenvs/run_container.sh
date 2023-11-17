@@ -7,5 +7,5 @@ pip install -e .
 cd isaacgymenvs
 DEVICE=$CUDA_VISIBLE_DEVICES
 unset CUDA_VISIBLE_DEVICES
-python train.py task=FrankaPushing headless=True wandb_activate=True wandb_project=taskmaster \
+python train.py headless=True wandb_activate=True wandb_project=taskmaster \
     sim_device=cuda:$DEVICE rl_device=cuda:$DEVICE graphics_device_id=$DEVICE "$@"
