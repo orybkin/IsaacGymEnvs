@@ -1208,6 +1208,7 @@ class ContinuousA2CBase(A2CBase):
     def relabel_batch(self, buffer):
         env = self.vec_env.env
         relabeled_buffer = copy.deepcopy(buffer)
+
         # Relabel states
         obs = relabeled_buffer.tensor_dict['obses']
         # compute episode idx
@@ -1223,43 +1224,44 @@ class ContinuousA2CBase(A2CBase):
         goal = obs[:, :, env.target_idx]
         idx = idx.repeat(1, 1, goal.shape[2])
         goal = torch.gather(goal, 0, idx)
-        # debug = True
-        # if debug:
-        #     old_goal = torch.gather(obs[:, :, 7:10], 0, idx)       
-        #     comp = (relabeled_buffer.tensor_dict['obses'][:, :, 7:10] == old_goal); comp.sum() / np.prod(comp.shape)
-        #     assert comp.all()
         # Note - these are specific to franka pushing
         relabeled_buffer.tensor_dict['obses'][:, :, 7:10] = goal
         target_pos = relabeled_buffer.tensor_dict['obses'][..., env.target_idx]
-        relabeled_buffer.tensor_dict['rewards'] = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
-        # if debug:
-        #     rew = relabeled_buffer.tensor_dict['rewards']
-        # Get obs - do it in slices to conserve memory
+
+        # Rewards should be shifted by one
+        last_obs = dict(obs=self.obs['obs'].clone())
+        last_obs['obs'][:, 7:10] = relabeled_buffer.tensor_dict['obses'][-1, :, 7:10]
+        goal = torch.cat([goal[1:], last_obs['obs'][None, :, 7:10]], 0)
+        target_pos = torch.cat([target_pos[1:], last_obs['obs'][None, :, env.target_idx]], 0)
+
+        # Run model - do it in slices to conserve memory
         n_slices = 16
+        # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         obs = relabeled_buffer.tensor_dict['obses'].reshape([n_slices, -1] + list(obs.shape[1:]))
         res_dicts = [self.get_action_values(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
-        # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         for k in res_dicts[0]:
             if k in relabeled_buffer.tensor_dict:
                 relabeled_buffer.tensor_dict[k] = torch.stack([d[k] for d in res_dicts], 0).reshape(self.horizon_length, self.num_actors, -1)
 
-        # Compute returns
-        last_obs = dict(obs=self.obs['obs'].clone())
-        last_obs['obs'][:, 7:10] = relabeled_buffer.tensor_dict['obses'][-1, :, 7:10]
-        last_values = self.get_values(last_obs)
+        # Rewards
+        rewards = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
+        if self.value_bootstrap:
+            rewards += self.gamma * relabeled_buffer.tensor_dict['values'] * relabeled_buffer.tensor_dict['dones'].unsqueeze(2).float()
+        relabeled_buffer.tensor_dict['rewards'] = rewards
 
+        # Compute returns
+        last_values = self.get_values(last_obs)
         fdones = self.dones.float()
         mb_fdones = relabeled_buffer.tensor_dict['dones'].float()
         mb_values = relabeled_buffer.tensor_dict['values']
         mb_rewards = relabeled_buffer.tensor_dict['rewards']
         mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
         mb_returns = mb_advs + mb_values
-
         relabeled_batch = relabeled_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
         relabeled_batch['returns'] = swap_and_flatten01(mb_returns)
         relabeled_batch['played_frames'] = self.batch_size
 
-        return relabeled_batch
+        return relabeled_buffer, relabeled_batch
 
     def train_epoch(self):
         super().train_epoch()
@@ -1283,8 +1285,8 @@ class ContinuousA2CBase(A2CBase):
         kl_dataset = self.dataset
         if self.relabel:
             self.set_eval()
-            relabeled_batch = self.relabel_batch(self.experience_buffer)
-            self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=False)
+            relabeled_buffer, relabeled_batch = self.relabel_batch(self.experience_buffer)
+            self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=False, identifier='_relabeled')
             kl_dataset = self.relabeled_dataset
             self.set_train()
         relabeled_minibatch = None
@@ -1334,7 +1336,7 @@ class ContinuousA2CBase(A2CBase):
 
         return batch_dict['step_time'], play_time, update_time, total_time, metrics, last_lr, lr_mul
 
-    def prepare_dataset(self, batch_dict, dataset, update_mov_avg=True):
+    def prepare_dataset(self, batch_dict, dataset, update_mov_avg=True, identifier=''):
         returns = batch_dict['returns']
         values = batch_dict['values']
         rnn_masks = batch_dict.get('rnn_masks', None)
@@ -1359,9 +1361,16 @@ class ContinuousA2CBase(A2CBase):
             else:
                 if self.normalize_rms_advantage:
                     advantages = self.advantage_mean_std(advantages)
+                    self.diagnostics.diag_dict[f'diagnostics/rms_advantage_mean{identifier}'] = self.advantage_mean_std.moving_mean
+                    self.diagnostics.diag_dict[f'diagnostics/rms_advantage_var{identifier}'] = self.advantage_mean_std.moving_var
                 else:
                     self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
-                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+                    advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
+                    self.diagnostics.diag_dict[f'diagnostics/advantage_mean{identifier}'] = self.advantage_mean_std['mean']
+                    self.diagnostics.diag_dict[f'diagnostics/advantage_std{identifier}'] = self.advantage_mean_std['std']
+            
+                self.diagnostics.diag_dict[f'diagnostics/rms_value_mean{identifier}'] = self.value_mean_std.running_mean
+                self.diagnostics.diag_dict[f'diagnostics/rms_value_var{identifier}'] = self.value_mean_std.running_var
 
         dataset_dict = {}
         dataset_dict['old_values'] = values
