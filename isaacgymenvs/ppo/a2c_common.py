@@ -556,21 +556,20 @@ class A2CBase(BaseAlgorithm):
         obs = self.obs_to_tensors(obs)
         return obs
 
-    def discount_values(self, fdones, last_extrinsic_values, mb_fdones, mb_extrinsic_values, mb_rewards):
+    def discount_values(self, fdones, last_values, mb_fdones, mb_values, mb_rewards):
         lastgaelam = 0
         mb_advs = torch.zeros_like(mb_rewards)
 
         for t in reversed(range(self.horizon_length)):
             if t == self.horizon_length - 1:
-                nextnonterminal = 1.0 - fdones
-                nextvalues = last_extrinsic_values
+                nextvalues = last_values
             else:
-                nextnonterminal = 1.0 - mb_fdones[t+1]
-                nextvalues = mb_extrinsic_values[t+1]
-            nextnonterminal = nextnonterminal.unsqueeze(1)
+                nextvalues = mb_values[t+1]
+            nonterminal = 1.0 - mb_fdones[t]
+            nonterminal = nonterminal.unsqueeze(1)
 
-            delta = mb_rewards[t] + self.gamma * nextvalues * nextnonterminal - mb_extrinsic_values[t]
-            mb_advs[t] = lastgaelam = delta + self.gamma * self.tau * nextnonterminal * lastgaelam
+            delta = mb_rewards[t] + self.gamma * nextvalues * nonterminal - mb_values[t]
+            mb_advs[t] = lastgaelam = delta + self.gamma * self.tau * nonterminal * lastgaelam
         return mb_advs
 
     def discount_values_masks(self, fdones, last_extrinsic_values, mb_fdones, mb_extrinsic_values, mb_rewards, mb_masks):

@@ -796,7 +796,11 @@ class FrankaPushing(VecTask):
         # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
+            # There is something funny going on here. This reset doesn't actually apply until the next iteration. 
+            # Even more interestingly, compute_observations overrides the values back with what it was before the reset.
+            # However, the next iteration does have the correct values nonetheless. They must be somehow internally cached.
             self.reset_idx(env_ids)
+
         # Produce observation
         self.compute_observations()
         if self.render_this_step():
