@@ -170,7 +170,7 @@ class FrankaPushing(VecTask):
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
 
         # Reset all environments
-        self.reset_idx(torch.arange(self.num_envs, device=self.device))
+        self.reset_idx()
 
         # Refresh tensors
         self._refresh()
@@ -531,7 +531,9 @@ class FrankaPushing(VecTask):
             # self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
         self.gym.end_access_image_tensors(self.sim)
 
-    def reset_idx(self, env_ids):
+    def reset_idx(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
         env_ids_int32 = env_ids.to(dtype=torch.int32)
 
         for j in range(self.n_cubes):

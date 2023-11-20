@@ -140,6 +140,7 @@ class A2CBase(BaseAlgorithm):
         self.weight_decay = config.get('weight_decay', 0.0)
         self.use_action_masks = config.get('use_action_masks', False)
         self.is_train = config.get('is_train', True)
+        self.test_every_episodes = config.get('test_every_episodes', 10)
 
         self.central_value_config = self.config.get('central_value_config', None)
         self.has_central_value = self.central_value_config is not None
@@ -1235,7 +1236,7 @@ class ContinuousA2CBase(A2CBase):
         target_pos = torch.cat([target_pos[1:], last_obs['obs'][None, :, env.target_idx]], 0)
 
         # Run model - do it in slices to conserve memory
-        n_slices = 16
+        n_slices = min(16, obs.shape[0])
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         obs = relabeled_buffer.tensor_dict['obses'].reshape([n_slices, -1] + list(obs.shape[1:]))
         res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
@@ -1403,36 +1404,41 @@ class ContinuousA2CBase(A2CBase):
             self.central_value_net.update_dataset(dataset_dict)
 
     def test(self, render):
+        self.set_eval()
         self.vec_env.env.test = True
         if render:
             self.vec_env.env.override_render = True
+        self.vec_env.env.reset_idx()
         cut = self.vec_env.env.max_pix
 
         update_list = self.update_list
+        obs = self.obs
+        dones = self.dones
         for n in range(self.vec_env.env.max_episode_length):
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
-                res_dict = self.get_masked_action_values(self.obs, masks)
+                res_dict = self.get_masked_action_values(obs, masks)
             else:
-                res_dict = self.run_model(self.obs)
+                res_dict = self.run_model(obs)
             
-            self.test_buffer.update_data('obses', n, self.obs['obs'][:cut])
-            self.test_buffer.update_data('dones', n, self.dones[:cut])
+            self.test_buffer.update_data('obses', n, obs['obs'][:cut])
+            self.test_buffer.update_data('dones', n, dones[:cut])
 
             for k in update_list:
                 self.test_buffer.update_data(k, n, res_dict[k][:cut]) 
             if self.has_central_value:
-                self.test_buffer.update_data('states', n, self.obs['states'][:cut])
+                self.test_buffer.update_data('states', n, obs['states'][:cut])
 
-            self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
+            obs, rewards, dones, infos = self.env_step(res_dict['actions'])
 
             # Save images
-            all_done_indices = self.dones.nonzero(as_tuple=False)[::self.num_agents]
+            all_done_indices = dones.nonzero(as_tuple=False)[::self.num_agents]
             self.algo_observer.process_infos(infos, all_done_indices)
 
         self.vec_env.env.test = False
         if render:
             self.vec_env.env.override_render = False
+        self.vec_env.env.reset_idx()
 
     def train(self):
         self.init_tensors()
@@ -1442,7 +1448,6 @@ class ContinuousA2CBase(A2CBase):
         rep_count = 0
         self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
-        self.test_every_episodes = 10
         test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
         render_check = Every(self.vec_env.env.render_every_episodes * self.vec_env.env.max_episode_length)
 
@@ -1557,5 +1562,7 @@ class ContinuousA2CBase(A2CBase):
             # Test
             iteration = self.frame / self.num_actors
             if test_check.check(iteration):
+                print("Testing...")
                 self.test(render=render_check.check(iteration))
                 self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')
+                print("Done Testing.")
