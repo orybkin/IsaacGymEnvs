@@ -410,7 +410,7 @@ class A2CBase(BaseAlgorithm):
         #if self.has_central_value:
         #    self.central_value_net.update_lr(lr)
 
-    def get_action_values(self, obs):
+    def run_model(self, obs):
         processed_obs = self._preproc_obs(obs['obs'])
         self.model.eval()
         input_dict = {
@@ -762,7 +762,7 @@ class A2CBase(BaseAlgorithm):
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
-                res_dict = self.get_action_values(self.obs)
+                res_dict = self.run_model(self.obs)
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
 
@@ -847,7 +847,7 @@ class A2CBase(BaseAlgorithm):
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
-                res_dict = self.get_action_values(self.obs)
+                res_dict = self.run_model(self.obs)
 
             self.rnn_states = res_dict['rnn_states']
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
@@ -1238,10 +1238,14 @@ class ContinuousA2CBase(A2CBase):
         n_slices = 16
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         obs = relabeled_buffer.tensor_dict['obses'].reshape([n_slices, -1] + list(obs.shape[1:]))
-        res_dicts = [self.get_action_values(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
+        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
+        res_dict = {}
         for k in res_dicts[0]:
             if k in relabeled_buffer.tensor_dict:
-                relabeled_buffer.tensor_dict[k] = torch.stack([d[k] for d in res_dicts], 0).reshape(self.horizon_length, self.num_actors, -1)
+                res_dict[k] = torch.stack([d[k] for d in res_dicts], 0).reshape(self.horizon_length, self.num_actors, -1)
+        res_dict.pop('actions')
+        res_dict['neglogpacs'] = self.model.neglogp(relabeled_buffer.tensor_dict['actions'], res_dict['mus'], res_dict['sigmas'], torch.log(res_dict['sigmas']))
+        relabeled_buffer.tensor_dict.update(res_dict)
 
         # Rewards
         rewards = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
@@ -1410,7 +1414,7 @@ class ContinuousA2CBase(A2CBase):
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
-                res_dict = self.get_action_values(self.obs)
+                res_dict = self.run_model(self.obs)
             
             self.test_buffer.update_data('obses', n, self.obs['obs'][:cut])
             self.test_buffer.update_data('dones', n, self.dones[:cut])
