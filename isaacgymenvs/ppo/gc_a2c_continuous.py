@@ -21,9 +21,11 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
             self.actor_loss_func[1] = partial(awr_loss, temperature=self.config['awr_temperature'])
         else:
             self.actor_loss_func = [self.actor_loss_func, self.actor_loss_func]
+        self.awr_coef = self.config.get('awr_coef', 1.0)
 
     def train_actor_critic(self, original_dict, relabeled_dict):
         loss = [0, 0]
+        a_loss_coef = [1.0, self.awr_coef]
         losses_dict = {}
         diagnostics = {}
         for i, input_dict in enumerate([original_dict, relabeled_dict]):
@@ -71,7 +73,7 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
                 a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
 
-                loss[i] = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+                loss[i] = a_loss * a_loss_coef[i] + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
                 from torch.nn import functional
                 torch.nn.functional.linear
                 if self.multi_gpu:
