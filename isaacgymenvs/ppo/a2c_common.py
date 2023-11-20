@@ -9,7 +9,7 @@ from rl_games.algos_torch import torch_ext
 from isaacgymenvs.ppo import schedulers
 from rl_games.common.experience import ExperienceBuffer
 from rl_games.common.interval_summary_writer import IntervalSummaryWriter
-from rl_games.common.diagnostics import DefaultDiagnostics, PpoDiagnostics
+from isaacgymenvs.ppo.diagnostics import DefaultDiagnostics, PpoDiagnostics
 from isaacgymenvs.ppo import model_builder
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from utils.rlgames_utils import Every
