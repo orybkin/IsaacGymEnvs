@@ -817,11 +817,13 @@ class FrankaPushing(VecTask):
         metrics["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)
         metrics["success@4"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
         metrics["success@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02
+        metrics["failure@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) > 0.02
         if self.test:
             for i in range(self.max_pix):
                 metrics[f"goal_dist_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i]
                 metrics[f"success@4_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.04
                 metrics[f"success@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.02
+                metrics[f"failure@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] > 0.02
         self.extras["episodic"] = metrics
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
