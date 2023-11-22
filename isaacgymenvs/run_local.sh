@@ -1,0 +1,1 @@
+printf "1%0.s\n" $(seq 1 $1) | xargs -t -I @ python train.py wandb_activate=True "${@:2}"
