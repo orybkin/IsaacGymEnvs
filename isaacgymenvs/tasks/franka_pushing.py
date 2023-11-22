@@ -531,6 +531,23 @@ class FrankaPushing(VecTask):
             # self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
         self.gym.end_access_image_tensors(self.sim)
 
+    def reset(self):
+        """Reset the environment.
+        Returns:
+            Observation dictionary, indices of environments being reset
+        """
+        env_ids = torch.arange(self.num_envs, device=self.device)
+        self.reset_idx(env_ids)
+        self.progress_buf += 1
+
+        self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
+
+        # asymmetric actor-critic
+        if self.num_states > 0:
+            self.obs_dict["states"] = self.get_state()
+
+        return self.obs_dict
+    
     def reset_idx(self, env_ids=None):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
