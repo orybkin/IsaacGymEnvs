@@ -26,7 +26,9 @@ class PpoDiagnostics(DefaultDiagnostics):
         if writter is None:
             return
         for k,v in self.diag_dict.items():
-            writter.add_scalar(k, v.cpu().numpy(), self.current_epoch)
+            if isinstance(v, torch.Tensor):
+                v = v.cpu().numpy()
+            writter.add_scalar(k, v, self.current_epoch)
     
     def epoch(self, agent, current_epoch):
         self.current_epoch = current_epoch

@@ -116,7 +116,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
 
             if self.has_value_loss:
-                c_loss = common_losses.critic_loss(self.model,value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+                c_loss, clip_value_frac = a2c_common.critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
             else:
                 c_loss = torch.zeros(1, device=self.ppo_device)
             if self.bound_loss_type == 'regularisation':
@@ -149,7 +149,8 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         self.diagnostics.mini_batch(self, 
         {
             'explained_variance': torch_ext.explained_variance(value_preds_batch, return_batch, rnn_masks).detach(),
-            'clipped_fraction': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach()
+            'clipped_fraction': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach(),
+            'clipped_value_fraction': clip_value_frac.detach(),
         })  
 
         losses_dict = {'a_loss': a_loss, 'c_loss': c_loss, 'entropy': entropy}

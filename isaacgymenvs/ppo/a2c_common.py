@@ -63,6 +63,21 @@ def awr_loss(old_action_neglog_probs_batch, action_neglog_probs, advantage, is_p
 
     return a_loss
 
+
+def critic_loss(value_preds_batch, values, curr_e_clip, return_batch, clip_value):
+    if clip_value:
+        value_pred_clipped = value_preds_batch + \
+                (values - value_preds_batch).clamp(-curr_e_clip, curr_e_clip)
+        value_losses = (values - return_batch)**2
+        value_losses_clipped = (value_pred_clipped - return_batch)**2
+        c_loss = torch.max(value_losses, value_losses_clipped)
+        clipped_frac = (value_losses < value_losses_clipped).sum() / np.prod(value_losses.shape)
+    else:
+        c_loss = (return_batch - values)**2
+        clipped_frac = torch.Tensor([0])
+    return c_loss, clipped_frac
+
+
 class A2CBase(BaseAlgorithm):
 
     def __init__(self, base_name, params):
@@ -1225,7 +1240,6 @@ class ContinuousA2CBase(A2CBase):
         goal = obs[:, :, env.target_idx]
         idx = idx.repeat(1, 1, goal.shape[2])
         goal = torch.gather(goal, 0, idx)
-        # Note - these are specific to franka pushing
         relabeled_buffer.tensor_dict['obses'][:, :, 7:10] = goal
         target_pos = relabeled_buffer.tensor_dict['obses'][..., env.target_idx]
 
@@ -1250,6 +1264,7 @@ class ContinuousA2CBase(A2CBase):
 
         # Rewards
         rewards = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
+        # TODO there is something funny about this - why the multiply by gamma?
         if self.value_bootstrap:
             rewards += self.gamma * relabeled_buffer.tensor_dict['values'] * relabeled_buffer.tensor_dict['dones'].unsqueeze(2).float()
         relabeled_buffer.tensor_dict['rewards'] = rewards
@@ -1375,7 +1390,7 @@ class ContinuousA2CBase(A2CBase):
                     self.diagnostics.diag_dict[f'diagnostics/advantage_std{identifier}'] = self.advantage_mean_std['std']
             
                 self.diagnostics.diag_dict[f'diagnostics/rms_value_mean{identifier}'] = self.value_mean_std.running_mean
-                self.diagnostics.diag_dict[f'diagnostics/rms_value_var{identifier}'] = self.value_mean_std.running_var
+                self.diagnostics.diag_dict[f'diagnostics/rms_value_std{identifier}'] = math.sqrt(self.value_mean_std.running_var)
 
         dataset_dict = {}
         dataset_dict['old_values'] = values

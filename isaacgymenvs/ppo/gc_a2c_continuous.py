@@ -1,4 +1,4 @@
-from isaacgymenvs.ppo import a2c_continuous
+from isaacgymenvs.ppo import a2c_continuous, a2c_common
 from isaacgymenvs.ppo.a2c_common import awr_loss
 from rl_games.algos_torch import torch_ext
 from rl_games.algos_torch import central_value
@@ -61,7 +61,7 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 a_loss = self.actor_loss_func[i](old_action_log_probs_batch, action_log_probs, advantage, self.ppo, self.e_clip)
 
                 if self.has_value_loss:
-                    c_loss = common_losses.critic_loss(self.model, value_preds_batch, values, self.e_clip, return_batch, self.clip_value)
+                    c_loss, clip_value_frac = a2c_common.critic_loss(value_preds_batch, values, self.e_clip, return_batch, self.clip_value)
                 else:
                     c_loss = torch.zeros(1, device=self.ppo_device)
                 if self.bound_loss_type == 'regularisation':
@@ -94,7 +94,8 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 losses_dict[f'bounds_loss{identifier}'] = b_loss
             diagnostics.update({
                 f'explained_variance{identifier}': torch_ext.explained_variance(value_preds_batch, return_batch, rnn_masks).detach(),
-                f'clipped_fraction{identifier}': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach()
+                f'clipped_fraction{identifier}': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach(),
+                f'clipped_value_fraction{identifier}': clip_value_frac,
             })
 
         self.scaler.scale(loss[0] + loss[1]).backward()
