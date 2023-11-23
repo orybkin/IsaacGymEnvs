@@ -1385,7 +1385,8 @@ class ContinuousA2CBase(A2CBase):
                     self.diagnostics.diag_dict[f'diagnostics/rms_advantage_mean{identifier}'] = self.advantage_mean_std.moving_mean
                     self.diagnostics.diag_dict[f'diagnostics/rms_advantage_var{identifier}'] = self.advantage_mean_std.moving_var
                 else:
-                    self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
+                    if update_mov_avg:
+                        self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
                     advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
                     self.diagnostics.diag_dict[f'diagnostics/advantage_mean{identifier}'] = self.advantage_mean_std['mean']
                     self.diagnostics.diag_dict[f'diagnostics/advantage_std{identifier}'] = self.advantage_mean_std['std']
