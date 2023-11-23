@@ -1324,8 +1324,7 @@ class ContinuousA2CBase(A2CBase):
             for i in range(len(self.dataset)):
                 relabeled_minibatch = self.relabeled_dataset[i] if self.relabel else None
                 losses, kl, last_lr, lr_mul, cmu, csigma = self.train_actor_critic(self.dataset[i], relabeled_minibatch)
-                for k, v in losses.items():
-                    metrics[f'losses/{k}'].append(v)
+                for k, v in losses.items(): metrics[f'losses/{k}'].append(v)
                 ep_kls.append(kl)
 
                 kl_dataset.update_mu_sigma(cmu, csigma)
@@ -1363,6 +1362,9 @@ class ContinuousA2CBase(A2CBase):
         rnn_masks = batch_dict.get('rnn_masks', None)
         advantages = returns - values
 
+        self.diagnostics.diag_dict[f'diagnostics/return_mean{identifier}'] = returns.mean()
+        self.diagnostics.diag_dict[f'diagnostics/value_mean{identifier}'] = values.mean()
+
         if self.normalize_value:
             if update_mov_avg:
                 self.value_mean_std.train()
@@ -1387,9 +1389,9 @@ class ContinuousA2CBase(A2CBase):
                 else:
                     if update_mov_avg:
                         self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
+                    self.diagnostics.diag_dict[f'diagnostics/advantage_mean{identifier}'] = advantages.mean()
+                    self.diagnostics.diag_dict[f'diagnostics/advantage_std{identifier}'] = advantages.std()
                     advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
-                    self.diagnostics.diag_dict[f'diagnostics/advantage_mean{identifier}'] = self.advantage_mean_std['mean']
-                    self.diagnostics.diag_dict[f'diagnostics/advantage_std{identifier}'] = self.advantage_mean_std['std']
             
                 self.diagnostics.diag_dict[f'diagnostics/rms_value_mean{identifier}'] = self.value_mean_std.running_mean
                 self.diagnostics.diag_dict[f'diagnostics/rms_value_std{identifier}'] = math.sqrt(self.value_mean_std.running_var)
