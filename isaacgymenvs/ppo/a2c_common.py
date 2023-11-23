@@ -1321,6 +1321,9 @@ class ContinuousA2CBase(A2CBase):
         for mini_ep in range(0, self.mini_epochs_num):
             ep_kls = []
 
+            self.dataset.shuffle()
+            if self.relabel:
+                self.relabeled_dataset.shuffle()
             for i in range(len(self.dataset)):
                 relabeled_minibatch = self.relabeled_dataset[i] if self.relabel else None
                 losses, kl, last_lr, lr_mul, cmu, csigma = self.train_actor_critic(self.dataset[i], relabeled_minibatch)
