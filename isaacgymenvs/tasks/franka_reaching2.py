@@ -45,7 +45,6 @@ class FrankaReaching2(FrankaPushing):
     def __init__(self, *args, **kwargs):
         self.pushing_like = kwargs['cfg']['env'].get('pushing_like', True)
         super().__init__(*args, **kwargs)
-        self.target_idx = []
         self.target_idx = [0, 1, 2]
         self.target_name = 'eef_pos'
 

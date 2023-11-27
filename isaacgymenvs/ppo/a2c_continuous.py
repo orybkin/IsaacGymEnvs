@@ -3,7 +3,7 @@ from isaacgymenvs.ppo import a2c_common
 from rl_games.algos_torch import torch_ext
 from rl_games.algos_torch import central_value
 from rl_games.common import common_losses
-from rl_games.common import datasets
+from isaacgymenvs.ppo import datasets
 
 from torch import optim
 import torch 
