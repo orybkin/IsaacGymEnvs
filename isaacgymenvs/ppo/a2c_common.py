@@ -1307,7 +1307,7 @@ class ContinuousA2CBase(A2CBase):
         if self.relabel:
             self.set_eval()
             relabeled_buffer, relabeled_batch = self.relabel_batch(self.experience_buffer)
-            self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=False, identifier='_relabeled')
+            self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=self.joint_value_norm, identifier='_relabeled')
             kl_dataset = self.relabeled_dataset
             self.set_train()
         relabeled_minibatch = None

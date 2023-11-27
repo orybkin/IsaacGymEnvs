@@ -15,6 +15,7 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
         super().__init__(base_name, params)
 
         self.algo = self.config.get('algo', 'ppo')
+        self.joint_value_norm = self.config.get('joint_value_norm', True)
         if self.algo == 'pawr':
             self.actor_loss_func = [None, None]
             self.actor_loss_func[0] = common_losses.actor_loss

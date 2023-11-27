@@ -41,10 +41,12 @@ params:
 
     algo: 'awr'
     awr_temperature: 1.0
+    awr_coef: 1.0
     truncate_grads: False
     schedule_type: fixed
     lr_schedule: fixed
     relabel: False
+    joint_value_norm: True
 
     use_diagnostics: True
     ppo: True
