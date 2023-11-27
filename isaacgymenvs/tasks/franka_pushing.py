@@ -807,7 +807,6 @@ class FrankaPushing(VecTask):
 
     def post_physics_step(self):
         # Increment counter
-        self.rew_buf[:] = self.compute_franka_reward(self.states)
         self.progress_buf += 1
         self.reset_buf[:] = torch.where((self.progress_buf >= self.max_episode_length), torch.ones_like(self.reset_buf), self.reset_buf)
         self.done = self.reset_buf.clone()
@@ -824,6 +823,7 @@ class FrankaPushing(VecTask):
         self.compute_observations()
         if self.render_this_step():
             self.compute_pixel_obs()
+        self.rew_buf[:] = self.compute_franka_reward(self.states)
 
         # Extra logging
         if 'images' in self.extras:
