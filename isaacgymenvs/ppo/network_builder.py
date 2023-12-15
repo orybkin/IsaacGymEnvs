@@ -202,7 +202,6 @@ class A2CBuilder(NetworkBuilder):
             self.critic_mlp = nn.Sequential()
             if self.two_critics:
                 self.critic2_mlp = nn.Sequential()
-                assert not self.separate
                 assert not self.central_value
             
             if self.has_cnn:
@@ -261,6 +260,8 @@ class A2CBuilder(NetworkBuilder):
             self.actor_mlp = self._build_mlp(**mlp_args)
             if self.separate:
                 self.critic_mlp = self._build_mlp(**mlp_args)
+                if self.two_critics:
+                    self.critic2_mlp = self._build_mlp(**mlp_args)
 
             self.value = self._build_value_layer(out_size, self.value_size)
             if self.two_critics:
@@ -380,30 +381,14 @@ class A2CBuilder(NetworkBuilder):
                         c_out = self.critic_mlp(c_out)
                 else:
                     a_out = self.actor_mlp(a_out)
-                    c_out = self.critic_mlp(c_out)
-                            
-                value = self.value_act(self.value(c_out))
-
-                if self.is_discrete:
-                    logits = self.logits(a_out)
-                    return logits, value, states
-
-                if self.is_multi_discrete:
-                    logits = [logit(a_out) for logit in self.logits]
-                    return logits, value, states
-
-                if self.is_continuous:
-                    mu = self.mu_act(self.mu(a_out))
-                    if self.fixed_sigma:
-                        sigma = mu * 0.0 + self.sigma_act(self.sigma)
+                    if self.two_critics and value_index == 1:
+                        c_out = self.critic2_mlp(c_out)
                     else:
-                        sigma = self.sigma_act(self.sigma(a_out))
-
-                    return mu, sigma, value, states
+                        c_out = self.critic_mlp(c_out)
             else:
                 out = obs
                 out = self.actor_cnn(out)
-                out = out.flatten(1)                
+                out = out = out.flatten(1)                
 
                 if self.has_rnn:
                     seq_length = obs_dict.get('seq_length', 1)
@@ -438,26 +423,27 @@ class A2CBuilder(NetworkBuilder):
                         states = (states,)
                 else:
                     out = self.actor_mlp(out)
-                value = self.value_act(self.value(out))
-                if self.two_critics and value_index == 1:
-                    value = self.value_act(self.value2(out))
+                c_out = a_out = out
+            value = self.value_act(self.value(c_out))
+            if self.two_critics and value_index == 1:
+                value = self.value_act(self.value2(c_out))
 
-                if self.central_value:
-                    return value, states
+            if self.central_value:
+                return value, states
 
-                if self.is_discrete:
-                    logits = self.logits(out)
-                    return logits, value, states
-                if self.is_multi_discrete:
-                    logits = [logit(out) for logit in self.logits]
-                    return logits, value, states
-                if self.is_continuous:
-                    mu = self.mu_act(self.mu(out))
-                    if self.fixed_sigma:
-                        sigma = self.sigma_act(self.sigma)
-                    else:
-                        sigma = self.sigma_act(self.sigma(out))
-                    return mu, mu*0 + sigma, value, states
+            if self.is_discrete:
+                logits = self.logits(a_out)
+                return logits, value, states
+            if self.is_multi_discrete:
+                logits = [logit(a_out) for logit in self.logits]
+                return logits, value, states
+            if self.is_continuous:
+                mu = self.mu_act(self.mu(a_out))
+                if self.fixed_sigma:
+                    sigma = self.sigma_act(self.sigma)
+                else:
+                    sigma = self.sigma_act(self.sigma(a_out))
+                return mu, mu*0 + sigma, value, states
                     
         def is_separate_critic(self):
             return self.separate
