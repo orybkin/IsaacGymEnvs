@@ -585,7 +585,7 @@ class A2CBase(BaseAlgorithm):
             nonterminal = 1.0 - mb_fdones[t]
             nonterminal = nonterminal.unsqueeze(1)
 
-            delta = mb_rewards[t] + self.gamma * nextvalues * nonterminal - mb_values[t]
+            delta = (mb_rewards[t] + self.gamma * nextvalues * nonterminal - mb_values[t]) * nonterminal
             mb_advs[t] = lastgaelam = delta + self.gamma * self.tau * nonterminal * lastgaelam
         return mb_advs
 
