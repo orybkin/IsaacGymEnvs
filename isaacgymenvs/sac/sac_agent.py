@@ -37,6 +37,7 @@ class SACAgent(BaseAlgorithm):
         self.learnable_temperature = config["learnable_temperature"]
         self.replay_buffer_size = config["replay_buffer_size"]
         self.num_steps_per_episode = config.get("num_steps_per_episode", 1)
+        self.gradient_steps = config.get("gradient_steps", 1)
         self.normalize_input = config.get("normalize_input", False)
 
         # TODO: double-check! To use bootstrap instead?
@@ -499,14 +500,15 @@ class SACAgent(BaseAlgorithm):
             if not random_exploration:
                 self.set_train()
                 update_time_start = time.time()
-                actor_loss_info, critic1_loss, critic2_loss = self.update(self.epoch_num)
-                update_time_end = time.time()
-                update_time = update_time_end - update_time_start
+                for _ in range(self.gradient_steps):
+                    actor_loss_info, critic1_loss, critic2_loss = self.update(self.epoch_num)
+                    update_time = update_time_end - update_time_start
 
-                for key, value in actor_loss_info.items():
-                    actor_metrics[key].append(value)
-                critic1_losses.append(critic1_loss)
-                critic2_losses.append(critic2_loss)
+                    for key, value in actor_loss_info.items():
+                        actor_metrics[key].append(value)
+                    critic1_losses.append(critic1_loss)
+                    critic2_losses.append(critic2_loss)
+                update_time_end = time.time()
             else:
                 update_time = 0
 
