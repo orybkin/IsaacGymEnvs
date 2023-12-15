@@ -1365,8 +1365,8 @@ class ContinuousA2CBase(A2CBase):
         rnn_masks = batch_dict.get('rnn_masks', None)
         advantages = returns - values
 
-        self.diagnostics.diag_dict[f'diagnostics/return_mean{identifier}'] = returns.mean()
-        self.diagnostics.diag_dict[f'diagnostics/value_mean{identifier}'] = values.mean()
+        self.diagnostics.add(f'diagnostics/return_mean{identifier}', returns.mean())
+        self.diagnostics.add(f'diagnostics/value_mean{identifier}', values.mean())
 
         if self.normalize_value:
             if update_mov_avg:
@@ -1387,17 +1387,17 @@ class ContinuousA2CBase(A2CBase):
             else:
                 if self.normalize_rms_advantage:
                     advantages = self.advantage_mean_std(advantages)
-                    self.diagnostics.diag_dict[f'diagnostics/rms_advantage_mean{identifier}'] = self.advantage_mean_std.moving_mean
-                    self.diagnostics.diag_dict[f'diagnostics/rms_advantage_var{identifier}'] = self.advantage_mean_std.moving_var
+                    self.diagnostics.add(f'diagnostics/rms_advantage_mean{identifier}', self.advantage_mean_std.moving_mean)
+                    self.diagnostics.add(f'diagnostics/rms_advantage_var{identifier}', self.advantage_mean_std.moving_var)
                 else:
-                    if update_mov_avg:
-                        self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
-                    self.diagnostics.diag_dict[f'diagnostics/advantage_mean{identifier}'] = advantages.mean()
-                    self.diagnostics.diag_dict[f'diagnostics/advantage_std{identifier}'] = advantages.std()
+                    # if update_mov_avg:
+                    self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
+                    self.diagnostics.add(f'diagnostics/advantage_mean{identifier}', advantages.mean())
+                    self.diagnostics.add(f'diagnostics/advantage_std{identifier}', advantages.std())
                     advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
             
-                self.diagnostics.diag_dict[f'diagnostics/rms_value_mean{identifier}'] = self.value_mean_std.running_mean
-                self.diagnostics.diag_dict[f'diagnostics/rms_value_std{identifier}'] = math.sqrt(self.value_mean_std.running_var)
+                self.diagnostics.add(f'diagnostics/rms_value_mean{identifier}', self.value_mean_std.running_mean)
+                self.diagnostics.add(f'diagnostics/rms_value_std{identifier}', math.sqrt(self.value_mean_std.running_var))
 
         dataset_dict = {}
         dataset_dict['old_values'] = values

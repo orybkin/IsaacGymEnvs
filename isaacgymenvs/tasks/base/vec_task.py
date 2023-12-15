@@ -268,6 +268,10 @@ class VecTask(Env):
         self.set_viewer()
         self.allocate_buffers()
 
+        self.im_size = self.cam_w = 128
+        self.max_pix = 16
+        self.test = False
+
         self.obs_dict = {}
 
     def render_this_step(self):

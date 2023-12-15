@@ -58,6 +58,7 @@ params:
     max_epochs: ${resolve_default:500,${....max_iterations}}
     save_best_after: 200
     save_frequency: 50
+    use_diagnostics: True
     grad_norm: 1.0
     entropy_coef: 0.0
     truncate_grads: False

@@ -12,6 +12,8 @@ class DefaultDiagnostics(object):
         pass
     def mini_batch(self, agent, batch, e_clip, minibatch):
         pass
+    def add(self, key, value):
+        pass  
 
 
 class PpoDiagnostics(DefaultDiagnostics):
@@ -29,6 +31,9 @@ class PpoDiagnostics(DefaultDiagnostics):
             if isinstance(v, torch.Tensor):
                 v = v.cpu().numpy()
             writter.add_scalar(k, v, self.current_epoch)
+
+    def add(self, key, value):
+        self.diag_dict[key] = value
     
     def epoch(self, agent, current_epoch):
         self.current_epoch = current_epoch

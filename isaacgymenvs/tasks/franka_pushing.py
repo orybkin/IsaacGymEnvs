@@ -96,10 +96,6 @@ class FrankaPushing(VecTask):
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
         self.dist_reward_threshold  = self.cfg["env"]["distRewardThreshold"]
 
-        self.im_size = self.cam_w = 128
-        self.max_pix = 16
-        self.test = False
-
         self.target_idx = [14,15,16]
         self.target_name = 'cube0_pos'
 
