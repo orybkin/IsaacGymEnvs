@@ -16,6 +16,7 @@ import torch.nn.functional as F
 import numpy as np
 import time
 import os
+from collections import defaultdict
 
 
 class SACAgent(BaseAlgorithm):
@@ -87,9 +88,6 @@ class SACAgent(BaseAlgorithm):
         self.target_entropy_coef = config.get("target_entropy_coef", 1.0)
         self.target_entropy = self.target_entropy_coef * -self.env_info['action_space'].shape[0]
         print("Target entropy", self.target_entropy)
-
-        self.algo_observer = config['features']['observer']
-        self.algo_observer.before_init(base_name, config, self.experiment_name)
 
     def load_networks(self, params):
         builder = model_builder.ModelBuilder()
@@ -176,6 +174,8 @@ class SACAgent(BaseAlgorithm):
         os.makedirs(self.nn_dir, exist_ok=True)
         os.makedirs(self.summaries_dir, exist_ok=True)
 
+        self.algo_observer = config['features']['observer']
+        self.algo_observer.before_init(base_name, config, self.experiment_name)
         self.writer = SummaryWriter('runs/' + config['name'] + datetime.now().strftime("_%d-%H-%M-%S"))
         print("Run Directory:", config['name'] + datetime.now().strftime("_%d-%H-%M-%S"))
 
@@ -326,7 +326,13 @@ class SACAgent(BaseAlgorithm):
         else:
             alpha_loss = None
 
-        return actor_loss.detach(), entropy.detach(), self.alpha.detach(), alpha_loss # TODO: maybe not self.alpha
+        return {'losses/a_loss': actor_loss.detach(), 
+                'losses/entropy': entropy.detach(),
+                'losses/alpha_loss': alpha_loss, # TODO: maybe not self.alpha'
+                'info/alpha': self.alpha.detach(),
+                'info/actor_q': actor_Q.mean().detach(),
+                'info/target_entropy': torch.ones(1) * self.target_entropy,
+                }
 
     def soft_update_params(self, net, target_net, tau):
         for param, target_param in zip(net.parameters(), target_net.parameters()):
@@ -340,10 +346,8 @@ class SACAgent(BaseAlgorithm):
         obs = self.preproc_obs(obs)
         next_obs = self.preproc_obs(next_obs)
         critic_loss, critic1_loss, critic2_loss = self.update_critic(obs, action, reward, next_obs, not_done, step)
+        actor_loss_info = self.update_actor_and_alpha(obs, step)
 
-        actor_loss, entropy, alpha, alpha_loss = self.update_actor_and_alpha(obs, step)
-
-        actor_loss_info = actor_loss, entropy, alpha, alpha_loss
         self.soft_update_params(self.model.sac_network.critic, self.model.sac_network.critic_target,
                                      self.critic_tau)
         return actor_loss_info, critic1_loss, critic2_loss
@@ -424,15 +428,6 @@ class SACAgent(BaseAlgorithm):
 
         return actions
 
-    def extract_actor_stats(self, actor_losses, entropies, alphas, alpha_losses, actor_loss_info):
-        actor_loss, entropy, alpha, alpha_loss = actor_loss_info
-
-        actor_losses.append(actor_loss)
-        entropies.append(entropy)
-        if alpha_losses is not None:
-            alphas.append(alpha)
-            alpha_losses.append(alpha_loss)
-
     def clear_stats(self):
         self.game_rewards.clear()
         self.game_lengths.clear()
@@ -444,10 +439,7 @@ class SACAgent(BaseAlgorithm):
         total_update_time = 0
         total_time = 0
         step_time = 0.0
-        actor_losses = []
-        entropies = []
-        alphas = []
-        alpha_losses = []
+        actor_metrics = defaultdict(list)
         critic1_losses = []
         critic2_losses = []
 
@@ -511,7 +503,8 @@ class SACAgent(BaseAlgorithm):
                 update_time_end = time.time()
                 update_time = update_time_end - update_time_start
 
-                self.extract_actor_stats(actor_losses, entropies, alphas, alpha_losses, actor_loss_info)
+                for key, value in actor_loss_info.items():
+                    actor_metrics[key].append(value)
                 critic1_losses.append(critic1_loss)
                 critic2_losses.append(critic2_loss)
             else:
@@ -523,7 +516,7 @@ class SACAgent(BaseAlgorithm):
         total_time = total_time_end - total_time_start
         play_time = total_time - total_update_time
 
-        return step_time, play_time, total_update_time, total_time, actor_losses, entropies, alphas, alpha_losses, critic1_losses, critic2_losses
+        return step_time, play_time, total_update_time, total_time, actor_metrics, critic1_losses, critic2_losses
 
     def train_epoch(self):
         random_exploration = self.epoch_num < self.num_warmup_steps
@@ -539,7 +532,7 @@ class SACAgent(BaseAlgorithm):
 
         while True:
             self.epoch_num += 1
-            step_time, play_time, update_time, epoch_total_time, actor_losses, entropies, alphas, alpha_losses, critic1_losses, critic2_losses = self.train_epoch()
+            step_time, play_time, update_time, epoch_total_time, actor_metrics, critic1_losses, critic2_losses = self.train_epoch()
 
             total_time += epoch_total_time
 
@@ -561,14 +554,11 @@ class SACAgent(BaseAlgorithm):
             self.writer.add_scalar('performance/step_time', step_time, self.frame)
 
             if self.epoch_num >= self.num_warmup_steps:
-                self.writer.add_scalar('losses/a_loss', torch_ext.mean_list(actor_losses).item(), self.frame)
                 self.writer.add_scalar('losses/c1_loss', torch_ext.mean_list(critic1_losses).item(), self.frame)
                 self.writer.add_scalar('losses/c2_loss', torch_ext.mean_list(critic2_losses).item(), self.frame)
-                self.writer.add_scalar('losses/entropy', torch_ext.mean_list(entropies).item(), self.frame)
-
-                if alpha_losses[0] is not None:
-                    self.writer.add_scalar('losses/alpha_loss', torch_ext.mean_list(alpha_losses).item(), self.frame)
-                self.writer.add_scalar('info/alpha', torch_ext.mean_list(alphas).item(), self.frame)
+                for key, value in actor_metrics.items():
+                    if value[0] is not None:
+                        self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
 
             self.writer.add_scalar('info/epochs', self.epoch_num, self.frame)
             self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time)

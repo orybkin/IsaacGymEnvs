@@ -51,8 +51,5 @@ params:
 
     # use_diagnostics: True
     # mixed_precision: False
-    # normalize_value: True
-    # value_bootstrap: True
-    # normalize_advantage: True
     # score_to_win: 10000
     # max_epochs: ${resolve_default:50000,${....max_iterations}}

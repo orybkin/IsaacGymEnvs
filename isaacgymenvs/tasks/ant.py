@@ -295,6 +295,7 @@ class Ant(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
         self.compute_true_objective()
+        self.done = self.reset_buf.clone()
 
         # debug viz
         if self.viewer and self.debug_viz:
