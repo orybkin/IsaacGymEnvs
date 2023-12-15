@@ -177,7 +177,7 @@ class SACAgent(BaseAlgorithm):
 
         self.algo_observer = config['features']['observer']
         self.algo_observer.before_init(base_name, config, self.experiment_name)
-        self.writer = SummaryWriter('runs/' + config['name'] + datetime.now().strftime("_%d-%H-%M-%S"))
+        self.writer = SummaryWriter(self.summaries_dir)
         print("Run Directory:", config['name'] + datetime.now().strftime("_%d-%H-%M-%S"))
 
         self.is_tensor_obses = False
@@ -502,13 +502,11 @@ class SACAgent(BaseAlgorithm):
                 update_time_start = time.time()
                 for _ in range(self.gradient_steps):
                     actor_loss_info, critic1_loss, critic2_loss = self.update(self.epoch_num)
-                    update_time = update_time_end - update_time_start
-
-                    for key, value in actor_loss_info.items():
-                        actor_metrics[key].append(value)
+                    for key, value in actor_loss_info.items(): actor_metrics[key].append(value)
                     critic1_losses.append(critic1_loss)
                     critic2_losses.append(critic2_loss)
                 update_time_end = time.time()
+                update_time = update_time_end - update_time_start
             else:
                 update_time = 0
 
