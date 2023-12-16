@@ -249,7 +249,9 @@ class Ant(VecTask):
         # We optimize for the maximum velocity along the x-axis (forward)
         self.extras['true_objective'] = velocity[:, 0].squeeze()
 
-    def reset_idx(self, env_ids):
+    def reset_idx(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
         # Randomization can happen only at reset time, since it can reset actor positions on GPU
         if self.randomize:
             self.apply_randomizations(self.randomization_params)

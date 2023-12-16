@@ -123,7 +123,7 @@ class NetworkBuilder:
                 act_layers = [self.activations_factory.create(activation) for i in range(len(units))]
                 return D2RLNet(input_size, units, act_layers, norm_func_name)
             else:
-                return self._build_sequential_mlp(input_size, units, activation, dense_func, norm_func_name = None,)
+                return self._build_sequential_mlp(input_size, units, activation, dense_func, norm_func_name=norm_func_name)
 
         def _build_conv(self, ctype, **kwargs):
             print('conv_name:', ctype)
@@ -829,8 +829,7 @@ class DiagGaussianActor(NetworkBuilder.BaseNetwork):
         self.log_std_bounds = log_std_bounds
 
         self.trunk = self._build_mlp(**mlp_args)
-        last_layer = list(self.trunk.children())[-2].out_features
-        self.trunk = nn.Sequential(*list(self.trunk.children()), nn.Linear(last_layer, output_dim))
+        self.trunk = nn.Sequential(*list(self.trunk.children()), nn.Linear(mlp_args['units'][-1], output_dim))
 
     def forward(self, obs):
         mu, log_std = self.trunk(obs).chunk(2, dim=-1)
@@ -856,12 +855,10 @@ class DoubleQCritic(NetworkBuilder.BaseNetwork):
         super().__init__()
 
         self.Q1 = self._build_mlp(**mlp_args)
-        last_layer = list(self.Q1.children())[-2].out_features
-        self.Q1 = nn.Sequential(*list(self.Q1.children()), nn.Linear(last_layer, output_dim))
+        self.Q1 = nn.Sequential(*list(self.Q1.children()), nn.Linear(mlp_args['units'][-1], output_dim))
 
         self.Q2 = self._build_mlp(**mlp_args)
-        last_layer = list(self.Q2.children())[-2].out_features
-        self.Q2 = nn.Sequential(*list(self.Q2.children()), nn.Linear(last_layer, output_dim))
+        self.Q2 = nn.Sequential(*list(self.Q2.children()), nn.Linear(mlp_args['units'][-1], output_dim))
 
     def forward(self, obs, action):
         assert obs.size(0) == action.size(0)

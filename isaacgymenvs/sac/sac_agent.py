@@ -4,11 +4,11 @@ from rl_games.common import vecenv
 from rl_games.common import schedulers
 from rl_games.common import experience
 from isaacgymenvs.ppo.a2c_common import print_statistics
+from isaacgymenvs.ppo import model_builder
 
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
-from rl_games.algos_torch import  model_builder
 from torch import optim
 import torch 
 from torch import nn
@@ -148,6 +148,7 @@ class SACAgent(BaseAlgorithm):
         self.update_time = 0
         self.last_mean_rewards = -1000000000
         self.play_time = 0
+        self.update_num = 0
 
         # TODO: put it into the separate class
         pbt_str = ''
@@ -505,6 +506,7 @@ class SACAgent(BaseAlgorithm):
                     for key, value in actor_loss_info.items(): actor_metrics[key].append(value)
                     critic1_losses.append(critic1_loss)
                     critic2_losses.append(critic2_loss)
+                    self.update_num += 1
                 update_time_end = time.time()
                 update_time = update_time_end - update_time_start
             else:
@@ -561,6 +563,7 @@ class SACAgent(BaseAlgorithm):
                         self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
 
             self.writer.add_scalar('info/epochs', self.epoch_num, self.frame)
+            self.writer.add_scalar('info/updates', self.update_num, self.frame)
             self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time)
 
             if self.game_rewards.current_size > 0:
