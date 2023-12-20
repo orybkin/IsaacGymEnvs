@@ -5,6 +5,7 @@ from rl_games.common import schedulers
 from rl_games.common import experience
 from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
+from isaacgymenvs.sac import her_replay_buffer
 
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from torch.utils.tensorboard import SummaryWriter
@@ -39,6 +40,7 @@ class SACAgent(BaseAlgorithm):
         self.num_steps_per_episode = config.get("num_steps_per_episode", 1)
         self.gradient_steps = config.get("gradient_steps", 1)
         self.normalize_input = config.get("normalize_input", False)
+        self.relabel_ratio = config.get("relabel_ratio", 0.0)
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -82,10 +84,20 @@ class SACAgent(BaseAlgorithm):
                                                     lr=float(self.config["alpha_lr"]),
                                                     betas=self.config.get("alphas_betas", [0.9, 0.999]))
 
-        self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
-        self.env_info['action_space'].shape,
-        self.replay_buffer_size,
-        self._device)
+        if self.relabel_ratio > 0.0:
+            self.replay_buffer = her_replay_buffer.HERReplayBuffer(self.env_info['observation_space'].shape,
+                                                            self.env_info['action_space'].shape,
+                                                            self.replay_buffer_size,
+                                                            self.num_actors,
+                                                            self._device,
+                                                            self.vec_env.env,
+                                                            self.relabel_ratio)
+        else:
+            self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
+                                                                self.env_info['action_space'].shape,
+                                                                self.replay_buffer_size,
+                                                                self._device)
+        
         self.target_entropy_coef = config.get("target_entropy_coef", 1.0)
         self.target_entropy = self.target_entropy_coef * -self.env_info['action_space'].shape[0]
         print("Target entropy", self.target_entropy)

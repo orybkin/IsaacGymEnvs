@@ -19,6 +19,7 @@ params:
       initializer:
         name: default
     log_std_bounds: [-5, 2]
+    normalization: layer_norm
 
   load_checkpoint: ${if:${...checkpoint},True,False} # flag which sets whether to load the checkpoint
   load_path: ${...checkpoint} # path to the checkpoint to load
@@ -32,10 +33,12 @@ params:
     normalize_input: True
     reward_shaper:
       scale_value: 1.0
-    max_epochs: 50000
-    num_steps_per_episode: 8
+    max_frames: 1_000_000_000
+    num_steps_per_episode: 1
+    gradient_steps: 1
     save_best_after: 100
     save_frequency: 1000
+    target_entropy_coef: 1.0
     gamma: 0.99
     init_alpha: 1.0
     alpha_lr: 0.005
@@ -43,6 +46,7 @@ params:
     critic_lr: 0.0005
     critic_tau: 0.005
     batch_size: 4096
+    relabel_ratio: 0.0
     learnable_temperature: true
     num_seed_steps: 5
     num_warmup_steps: 10
