@@ -21,7 +21,8 @@ class PPODataset(Dataset):
         self.flat_indexes = torch.arange(total_games * self.seq_length, dtype=torch.long, device=self.device).reshape(total_games, self.seq_length)
 
         self.special_names = ['rnn_states']
-        self.shuffle()
+        self.idx = torch.arange(self.batch_size, dtype=torch.long, device=self.device)
+        # self.shuffle()
 
     def shuffle(self):
         self.idx = torch.randperm(self.batch_size)
