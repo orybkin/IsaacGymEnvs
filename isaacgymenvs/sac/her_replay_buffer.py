@@ -54,16 +54,17 @@ class HERReplayBuffer(experience.VectorizedReplayBuffer):
         for x, y in zip(self.data, [obs, action, reward, next_obs, done, steps_to_go]):
             x[self.idx] = y
 
-        self.current_ep_start = torch.where(done[:, 0] == 1, self.idx + 1, self.current_ep_start)
-        # Increment steps to go starting from current_ep_start
-        # create a mask with 1s in the range between self.current_ep_start and self.idx
-        mask = torch.ones_like(self.steps_to_go)
+        # Get steps-to-go
+        self.current_ep_start = torch.where(done[:, 0] == 1, (self.idx + 1) % self.n_steps, self.current_ep_start)
+        mask = torch.zeros_like(self.steps_to_go)
         ids = torch.arange(self.n_steps, device=self.device)[:, None]
-        mask[ids < self.current_ep_start[None]] = 0
-        mask[self.idx + 1:] = 0  
+        mask[(ids >= self.current_ep_start[None]) * (ids < self.idx)] = 1
+        # overflow
+        mask[(self.current_ep_start[None] > self.idx) * (ids < self.idx)] = 1
+        mask[(self.current_ep_start[None] > self.idx) * (ids >= self.current_ep_start[None])] = 1
         self.steps_to_go += mask
 
-        self.idx += 1 % self.n_steps
+        self.idx = (self.idx + 1) % self.n_steps
         self.full = self.full or self.idx == 0
 
     def sample(self, batch_size):
@@ -101,7 +102,7 @@ class HERReplayBuffer(experience.VectorizedReplayBuffer):
 
         max_steps_to_go = self.steps_to_go.flatten(0,1)[idxs]
         steps_to_go = randint(max_steps_to_go + 1)
-        goal_idxs = idxs + steps_to_go * self.n_envs
+        goal_idxs = (idxs + steps_to_go * self.n_envs) % (self.n_steps * self.n_envs)
         goal = self.next_obses.flatten(0,1)[goal_idxs][:, self.env.target_idx] 
 
         target_pos = next_obs[:, self.env.target_idx]
