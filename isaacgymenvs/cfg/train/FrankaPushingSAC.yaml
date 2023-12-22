@@ -38,6 +38,7 @@ params:
     gradient_steps: 1
     save_best_after: 100
     save_frequency: 1000
+    test_every_episodes: 10
     target_entropy_coef: 1.0
     gamma: 0.99
     init_alpha: 1.0

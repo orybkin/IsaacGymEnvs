@@ -6,6 +6,7 @@ from rl_games.common import experience
 from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
 from isaacgymenvs.sac import her_replay_buffer
+from isaacgymenvs.utils.rlgames_utils import Every
 
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from torch.utils.tensorboard import SummaryWriter
@@ -41,6 +42,7 @@ class SACAgent(BaseAlgorithm):
         self.gradient_steps = config.get("gradient_steps", 1)
         self.normalize_input = config.get("normalize_input", False)
         self.relabel_ratio = config.get("relabel_ratio", 0.0)
+        self.test_every_episodes = config.get('test_every_episodes', 10)        
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -539,6 +541,8 @@ class SACAgent(BaseAlgorithm):
     def train(self):
         self.init_tensors()
         self.algo_observer.after_init(self)
+        test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
+        render_check = Every(self.vec_env.env.render_every_episodes * self.vec_env.env.max_episode_length)
         total_time = 0
         # rep_count = 0
 
@@ -627,3 +631,34 @@ class SACAgent(BaseAlgorithm):
 
                 if should_exit:
                     return self.last_mean_rewards, self.epoch_num
+                
+            # Test
+            iteration = self.frame / self.num_actors
+            if test_check.check(iteration):
+                print("Testing...")
+                self.test(render=render_check.check(iteration))
+                self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time, '_test')
+                print("Done Testing.")
+
+    def test(self, render):
+        self.set_eval()
+        self.vec_env.env.test = True
+        if render:
+            self.vec_env.env.override_render = True
+        self.vec_env.env.reset_idx()
+        obs = self.obs
+
+        for n in range(self.vec_env.env.max_episode_length):
+            with torch.no_grad():
+                action = self.act(obs['obs'].float(), self.env_info["action_space"].shape, sample=True)
+        
+            obs, rewards, dones, infos = self.env_step(action)
+
+            # Save images
+            all_done_indices = dones.nonzero(as_tuple=False)[::self.num_agents]
+            self.algo_observer.process_infos(infos, all_done_indices)
+
+        self.vec_env.env.test = False
+        if render:
+            self.vec_env.env.override_render = False
+        self.vec_env.env.reset_idx()
