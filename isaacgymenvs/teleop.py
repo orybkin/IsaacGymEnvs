@@ -9,6 +9,7 @@ import sys
 import isaacgym  # pylint: disable=unused-import
 import torch
 from isaacgym import gymapi
+from omegaconf import DictConfig as Dict
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "IsaacGymEnvs"))
 import isaacgymenvs

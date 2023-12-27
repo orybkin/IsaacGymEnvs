@@ -95,6 +95,7 @@ class FrankaPushing(VecTask):
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
         self.dist_reward_threshold  = self.cfg["env"]["distRewardThreshold"]
+        self.easy = self.cfg["env"].get("easy", False)
 
         self.target_idx = [14,15,16]
         self.target_name = 'cube0_pos'
@@ -561,6 +562,12 @@ class FrankaPushing(VecTask):
             self.franka_default_dof_pos.unsqueeze(0) +
             self.franka_dof_noise * 2.0 * (reset_noise - 0.5),
             self.franka_dof_lower_limits.unsqueeze(0), self.franka_dof_upper_limits)
+        
+        if self.easy:
+            pos[:, :] = torch.tensor([-0.0169,  0.5665, -0.0645, -2.2328,  0.4967,  2.4131,  0.3481,  0.0400,  0.0400], device=self.device)[None]
+        
+        # tensor([ 0.0871,  0.5839, -0.0948, -2.5892, -0.1235,  3.4638,  0.9550,  0.0400, 0.0400]
+        #        [ 0.2171,  0.0121, -0.2010, -2.7235,  0.0092,  3.0235,  0.8217,  0.0400, 0.0400]
 
         # Overwrite gripper init pos (no noise since these are always position controlled)
         pos[:, -2:] = self.franka_default_dof_pos[-2:]
@@ -626,6 +633,8 @@ class FrankaPushing(VecTask):
 
         # Set z value, which is fixed height
         centered_cube_xy_state[2] = centered_cube_xy_state[2] + 0.15
+        if self.easy:
+            centered_cube_xy_state[2] = centered_cube_xy_state[2] - 0.1
 
         # Initialize rotation, which is no rotation (quat w = 1)
         sampled_cube_state[:, 6] = 1.0

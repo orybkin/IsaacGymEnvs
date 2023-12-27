@@ -17,7 +17,7 @@ params:
       activation: relu
 
       initializer:
-        name: default
+        name: orthogonal
     log_std_bounds: [-5, 2]
     normalization: layer_norm
 

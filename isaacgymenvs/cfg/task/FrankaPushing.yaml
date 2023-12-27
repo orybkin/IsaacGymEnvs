@@ -26,6 +26,7 @@ env:
 
   actionScale: 1.0
 
+  easy: False
   nCubes: 6
   startPositionNoise: 0.12
 
