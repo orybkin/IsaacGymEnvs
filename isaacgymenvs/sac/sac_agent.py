@@ -574,67 +574,68 @@ class SACAgent(BaseAlgorithm):
             self.writer.add_scalar('performance/rl_update_time', update_time, self.frame)
             self.writer.add_scalar('performance/step_inference_time', play_time, self.frame)
             self.writer.add_scalar('performance/step_time', step_time, self.frame)
+            
+            if self.epoch_num % 10 == 0:
+                if self.epoch_num >= self.num_warmup_steps:
+                    self.writer.add_scalar('losses/c1_loss', torch_ext.mean_list(critic1_losses).item(), self.frame)
+                    self.writer.add_scalar('losses/c2_loss', torch_ext.mean_list(critic2_losses).item(), self.frame)
+                    for key, value in actor_metrics.items():
+                        if value[0] is not None:
+                            self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
 
-            if self.epoch_num >= self.num_warmup_steps:
-                self.writer.add_scalar('losses/c1_loss', torch_ext.mean_list(critic1_losses).item(), self.frame)
-                self.writer.add_scalar('losses/c2_loss', torch_ext.mean_list(critic2_losses).item(), self.frame)
-                for key, value in actor_metrics.items():
-                    if value[0] is not None:
-                        self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
+                self.writer.add_scalar('info/epochs', self.epoch_num, self.frame)
+                self.writer.add_scalar('info/updates', self.update_num, self.frame)
+                self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time)
 
-            self.writer.add_scalar('info/epochs', self.epoch_num, self.frame)
-            self.writer.add_scalar('info/updates', self.update_num, self.frame)
-            self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time)
+                if self.game_rewards.current_size > 0:
+                    mean_rewards = self.game_rewards.get_mean()
+                    mean_lengths = self.game_lengths.get_mean()
 
-            if self.game_rewards.current_size > 0:
-                mean_rewards = self.game_rewards.get_mean()
-                mean_lengths = self.game_lengths.get_mean()
+                    self.writer.add_scalar('rewards/step', mean_rewards, self.frame)
+                    self.writer.add_scalar('rewards/time', mean_rewards, total_time)
+                    self.writer.add_scalar('episode_lengths/step', mean_lengths, self.frame)
+                    self.writer.add_scalar('episode_lengths/time', mean_lengths, total_time)
+                    checkpoint_name = self.config['name'] + '_ep_' + str(self.epoch_num) + '_rew_' + str(mean_rewards)
 
-                self.writer.add_scalar('rewards/step', mean_rewards, self.frame)
-                self.writer.add_scalar('rewards/time', mean_rewards, total_time)
-                self.writer.add_scalar('episode_lengths/step', mean_lengths, self.frame)
-                self.writer.add_scalar('episode_lengths/time', mean_lengths, total_time)
-                checkpoint_name = self.config['name'] + '_ep_' + str(self.epoch_num) + '_rew_' + str(mean_rewards)
+                    should_exit = False
 
-                should_exit = False
+                    if self.save_freq > 0:
+                        if self.epoch_num % self.save_freq == 0:
+                            self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name))
 
-                if self.save_freq > 0:
-                    if self.epoch_num % self.save_freq == 0:
-                        self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name))
+                    if mean_rewards > self.last_mean_rewards and self.epoch_num >= self.save_best_after:
+                        print('saving next best rewards: ', mean_rewards)
+                        self.last_mean_rewards = mean_rewards
+                        self.save(os.path.join(self.nn_dir, self.config['name']))
+                        if self.last_mean_rewards > self.config.get('score_to_win', float('inf')):
+                            print('Maximum reward achieved. Network won!')
+                            self.save(os.path.join(self.nn_dir, checkpoint_name))
+                            should_exit = True
 
-                if mean_rewards > self.last_mean_rewards and self.epoch_num >= self.save_best_after:
-                    print('saving next best rewards: ', mean_rewards)
-                    self.last_mean_rewards = mean_rewards
-                    self.save(os.path.join(self.nn_dir, self.config['name']))
-                    if self.last_mean_rewards > self.config.get('score_to_win', float('inf')):
-                        print('Maximum reward achieved. Network won!')
-                        self.save(os.path.join(self.nn_dir, checkpoint_name))
+                    if self.epoch_num >= self.max_epochs and self.max_epochs != -1:
+                        if self.game_rewards.current_size == 0:
+                            print('WARNING: Max epochs reached before any env terminated at least once')
+                            mean_rewards = -np.inf
+
+                        self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_ep_' + str(self.epoch_num) \
+                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                        print('MAX EPOCHS NUM!')
                         should_exit = True
 
-                if self.epoch_num >= self.max_epochs and self.max_epochs != -1:
-                    if self.game_rewards.current_size == 0:
-                        print('WARNING: Max epochs reached before any env terminated at least once')
-                        mean_rewards = -np.inf
+                    if self.frame >= self.max_frames and self.max_frames != -1:
+                        if self.game_rewards.current_size == 0:
+                            print('WARNING: Max frames reached before any env terminated at least once')
+                            mean_rewards = -np.inf
 
-                    self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_ep_' + str(self.epoch_num) \
-                        + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
-                    print('MAX EPOCHS NUM!')
-                    should_exit = True
+                        self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_frame_' + str(self.frame) \
+                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                        print('MAX FRAMES NUM!')
+                        should_exit = True
 
-                if self.frame >= self.max_frames and self.max_frames != -1:
-                    if self.game_rewards.current_size == 0:
-                        print('WARNING: Max frames reached before any env terminated at least once')
-                        mean_rewards = -np.inf
+                    update_time = 0
 
-                    self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_frame_' + str(self.frame) \
-                        + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
-                    print('MAX FRAMES NUM!')
-                    should_exit = True
-
-                update_time = 0
-
-                if should_exit:
-                    return self.last_mean_rewards, self.epoch_num
+                    if should_exit:
+                        return self.last_mean_rewards, self.epoch_num
                 
             # Test
             iteration = self.frame / self.num_actors
