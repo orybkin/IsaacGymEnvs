@@ -132,9 +132,6 @@ class SACAgent(BaseAlgorithm):
         #self.use_action_masks = config.get('use_action_masks', False)
         self.is_train = config.get('is_train', True)
 
-        self.c_loss = nn.MSELoss()
-        # self.c2_loss = nn.SmoothL1Loss()
-
         self.save_best_after = config.get('save_best_after', 500)
         self.print_stats = config.get('print_stats', True)
         self.rnn_states = None
@@ -303,8 +300,8 @@ class SACAgent(BaseAlgorithm):
         # get current Q estimates
         current_Q1, current_Q2 = self.model.critic(obs, action)
 
-        critic1_loss = self.c_loss(current_Q1, target_Q)
-        critic2_loss = self.c_loss(current_Q2, target_Q)
+        critic1_loss = nn.MSELoss()(current_Q1, target_Q)
+        critic2_loss = nn.MSELoss()(current_Q2, target_Q)
         critic_loss = critic1_loss + critic2_loss 
         self.critic_optimizer.zero_grad(set_to_none=True)
         critic_loss.backward()
@@ -342,13 +339,20 @@ class SACAgent(BaseAlgorithm):
         else:
             alpha_loss = None
 
-        return {'losses/a_loss': actor_loss.detach(), 
-                'losses/entropy': entropy.detach(),
-                'losses/alpha_loss': alpha_loss, # TODO: maybe not self.alpha'
-                'info/alpha': self.alpha.detach(),
-                'info/actor_q': actor_Q.mean().detach(),
-                'info/target_entropy': torch.ones(1) * self.target_entropy,
-                }
+        out = {'losses/a_loss': actor_loss.detach(), 
+               'losses/entropy': entropy.detach(),
+               'losses/alpha_loss': alpha_loss, # TODO: maybe not self.alpha'
+               'info/alpha': self.alpha.detach(),
+               'info/actor_q': actor_Q.mean().detach(),
+               'info/target_entropy': torch.ones(1) * self.target_entropy,}
+        
+        if self.relabel_ratio > 0:
+            bs = actor_Q.shape[0]
+            real = int(bs * (1 - self.relabel_ratio))
+            out['info/actor_q'] = actor_Q[:real].mean().detach()
+            out['info/actor_q_relabeled'] = actor_Q[real:].mean().detach()
+
+        return out
 
     def soft_update_params(self, net, target_net, tau):
         for param, target_param in zip(net.parameters(), target_net.parameters()):

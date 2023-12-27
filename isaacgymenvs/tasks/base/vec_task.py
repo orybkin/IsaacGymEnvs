@@ -388,6 +388,7 @@ class VecTask(Env):
             actions = self.dr_randomizations['actions']['noise_lambda'](actions)
 
         action_tensor = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+        self.extras['info'] = {'action_magnitude': action_tensor.abs().mean()}
         # apply actions
         self.pre_physics_step(action_tensor)
 

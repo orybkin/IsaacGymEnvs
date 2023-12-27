@@ -195,6 +195,11 @@ class RLGPUAlgoObserver(AlgoObserver):
                     self.episodic_stats[key]['min'] = data.min(0)
                     self.episodic_stats[key]['max'] = data.max(0)
                     self.episodic_stats[key]['last'] = data[-1]
+
+                    if key == 'goal_dist' and data.shape[0] > 10:
+                        self.episodic_stats[key]['improvement'] = data[10] - data[-1]
+                        self.episodic_stats[key]['displacement'] = np.abs(data[-1] - data[10])
+
                     self.episodic[key] = []
                 
                 # assert len(done_indices) == data.shape[1]
@@ -250,9 +255,7 @@ class RLGPUAlgoObserver(AlgoObserver):
                 self.videos = []
 
         for k, v in self.direct_info.items():
-            self.writer.add_scalar(f'{k}{phase}/frame', v, frame)
-            self.writer.add_scalar(f'{k}{phase}/iter', v, epoch_num)
-            self.writer.add_scalar(f'{k}{phase}/time', v, total_time)
+            self.writer.add_scalar(f'{k}{phase}', v, frame)
 
 
 class MultiObserver(AlgoObserver):
