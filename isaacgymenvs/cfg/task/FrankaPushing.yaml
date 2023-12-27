@@ -27,6 +27,7 @@ env:
   actionScale: 1.0
 
   easy: False
+  distanceFromBlock: 0.0
   nCubes: 6
   startPositionNoise: 0.12
 

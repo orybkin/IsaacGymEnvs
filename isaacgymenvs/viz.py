@@ -39,9 +39,10 @@ try:
             a = torch.zeros_like(a)
             # a[:, 0] = 1 # forward 
             # a[:, 1] = 1 # left
-            a[:, 2] = 1 # up
-            a[:, 3] = 1 # up
+            # a[:, 2] = 1 # up
+            # a[:, 3] = 1 # up
             # import pdb; pdb.set_trace()
             obs, reward, done, info = envs.step(a)
+            # print(obs['obs'][:, :3])
 except KeyboardInterrupt:
     print("Keyboard interrupt, shutting down.\n")
