@@ -38,3 +38,4 @@ isaacgymenvs/build-temp-*
 *.pth
 *events.out.tfevents.*
 isaacgymenvs/pabrtxl1
+isaacgymenvs/rsync.exp

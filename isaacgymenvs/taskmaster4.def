@@ -1,6 +1,6 @@
-# singularity build --fakeroot taskmaster.sif taskmaster_base3.def   
+# singularity build --fakeroot taskmaster.sif taskmaster4.def   
 # singularity shell --nv taskmaster.sif
-# This image is partially taken from the official isaac gym dockerfile and supports headless rendering
+# This is a cleaner image that uses external conda and supports headless rendering
 Bootstrap: docker
 From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
 
@@ -33,33 +33,32 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
     export NVIDIA_VISIBLE_DEVICES=all 
     export NVIDIA_DRIVER_CAPABILITIES=all
 
+    apt install -y wget parallel vim git
     # Install conda
-    apt install -y wget parallel vim 
-    wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-    bash Miniconda3-latest-Linux-x86_64.sh -b -p /home/miniconda3
-    export PATH="/home/miniconda3/bin:$PATH"
-    . /home/miniconda3/etc/profile.d/conda.sh
+    # wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
+    # bash Miniconda3-latest-Linux-x86_64.sh -b -p /home/miniconda3
+    # export PATH="/home/miniconda3/bin:$PATH"
+    # . /home/miniconda3/etc/profile.d/conda.sh
 
     # Install Isaac
-    conda create -n cubes python=3.7
-    conda activate cubes
-    conda install pytorch==1.12.0 torchvision==0.13.0 torchaudio==0.12.0 cudatoolkit=11.3 -c pytorch
-    cd isaacgym/python
-    pip install -e .
-    cd ../..
+    # conda create -n cubes python=3.7
+    # conda activate cubes
+    # conda install pytorch==1.12.0 torchvision==0.13.0 torchaudio==0.12.0 cudatoolkit=11.3 -c pytorch
+    # cd isaacgym/python
+    # pip install -e .
+    # cd ../..
 
     # Install taskmaster dependencies
-    apt-get install git -y
-    mkdir -p /global/scratch/users/oleh/
-    cd /global/scratch/users/oleh/
-    GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" git clone https://github.com/orybkin/taskmaster.git
-    cd taskmaster
-    pip install -e .
+    # mkdir -p /global/scratch/users/oleh/
+    # cd /global/scratch/users/oleh/
+    # GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" git clone https://github.com/orybkin/taskmaster.git
+    # cd taskmaster
+    # pip install -e .
 
-%environment
-    . /home/miniconda3/etc/profile.d/conda.sh
-    conda activate cubes
-    export LD_LIBRARY_PATH=/home/miniconda3/envs/cubes/lib/:$LD_LIBRARY_PATH
-    cd /global/scratch/users/oleh/taskmaster
-    pip install -e . 
-    cd isaacgymenvs
+# %environment
+#     . /home/miniconda3/etc/profile.d/conda.sh
+#     conda activate cubes
+#     export LD_LIBRARY_PATH=/home/miniconda3/envs/cubes/lib/:$LD_LIBRARY_PATH
+#     cd /global/scratch/users/oleh/taskmaster
+#     pip install -e . 
+#     cd isaacgymenvs

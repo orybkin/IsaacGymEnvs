@@ -1,0 +1,11 @@
+#!/usr/bin/expect -f
+
+set totp_secret "X265Q4474TXWKWMQOZBZDBGP6Z46SYB4"
+set otp_code [exec oathtool --totp -b $totp_secret]
+set command [join $argv " "]
+
+eval spawn $command
+
+expect "Password: "
+send "4877$otp_code\r"
+interact
