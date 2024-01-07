@@ -8,11 +8,11 @@ import torch
 from rl_games.common import object_factory
 from rl_games.common import tr_helpers
 
+from isaacgymenvs.ppo import players
 from isaacgymenvs.ppo import a2c_continuous
 from isaacgymenvs.ppo import gc_a2c_continuous
 from isaacgymenvs.sac import sac_agent
 from rl_games.algos_torch import a2c_discrete
-from rl_games.algos_torch import players
 from rl_games.common.algo_observer import DefaultAlgoObserver
 
 

@@ -657,7 +657,6 @@ class A2CBase(BaseAlgorithm):
         return state
 
     def set_full_state_weights(self, weights, set_epoch=True):
-
         self.set_weights(weights)
         if set_epoch:
             self.epoch_num = weights['epoch']
@@ -666,6 +665,7 @@ class A2CBase(BaseAlgorithm):
         if self.has_central_value:
             self.central_value_net.load_state_dict(weights['assymetric_vf_nets'])
 
+        for i in weights['optimizer']['state'].values(): i['step'] = i['step'].to('cpu')
         self.optimizer.load_state_dict(weights['optimizer'])
 
         self.last_mean_rewards = weights.get('last_mean_rewards', -1000000000)

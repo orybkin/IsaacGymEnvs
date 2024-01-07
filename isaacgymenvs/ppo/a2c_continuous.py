@@ -1,6 +1,5 @@
 from isaacgymenvs.ppo import a2c_common
-
-from rl_games.algos_torch import torch_ext
+from isaacgymenvs.ppo import torch_ext
 from rl_games.algos_torch import central_value
 from rl_games.common import common_losses
 from isaacgymenvs.ppo import datasets
@@ -70,7 +69,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         torch_ext.save_checkpoint(fn, state)
 
     def restore(self, fn, set_epoch=True):
-        checkpoint = torch_ext.load_checkpoint(fn)
+        checkpoint = torch_ext.load_checkpoint(fn, self.device)
         self.set_full_state_weights(checkpoint, set_epoch=set_epoch)
 
     def get_masked_action_values(self, obs, action_masks):
