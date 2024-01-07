@@ -31,6 +31,9 @@ env:
   nCubes: 6
   startPositionNoise: 0.12
 
+  rigidCubes: False
+  testTask: -1
+
   renderEveryEpisodes: 1000
 
   controlType: osc  # options are {joint_tor, osc}

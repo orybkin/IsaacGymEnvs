@@ -92,10 +92,13 @@ class FrankaPushing(VecTask):
         self.franka_dof_noise = self.cfg["env"]["frankaDofNoise"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
         self.n_cubes = self.cfg["env"]["nCubes"]
+        self.n_observed_cubes = self.cfg["env"].get("nObservedCubes", self.n_cubes)
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
         self.dist_reward_threshold  = self.cfg["env"]["distRewardThreshold"]
         self.easy = self.cfg["env"].get("easy", False)
+        self.test_task = self.cfg["env"].get("testTask", -1)
+        self.rigid_cubes = self.cfg["env"].get("rigidCubes", False)
         self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
 
         self.target_idx = [14,15,16]
@@ -111,7 +114,7 @@ class FrankaPushing(VecTask):
 
         # dimensions
         # obs include: eef_pose (7) + q_gripper (2)
-        self.cfg["env"]["numObservations"] = 12 + 10 * self.n_cubes if self.control_type == "osc" else 19 + 10 * self.n_cubes
+        self.cfg["env"]["numObservations"] = 12 + 10 * self.n_observed_cubes if self.control_type == "osc" else 19 + 10 * self.n_observed_cubes
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
         self.cfg["env"]["numActions"] = 7 if self.control_type == "osc" else 8
 
@@ -253,6 +256,9 @@ class FrankaPushing(VecTask):
         for j in range(self.n_cubes):
             cube_assets += [self.gym.create_box(self.sim, *([self.cube_sizes[j]] * 3), cube_options)]
             cube_colors += [gymapi.Vec3(0.0, np.random.rand(), np.random.rand())]
+            if self.rigid_cubes:
+                cube_options.fix_base_link = True
+                cube_colors[-1] = gymapi.Vec3(0.5, 0.5, 0.5)
         cube_colors[0] = gymapi.Vec3(0.6, 0.1, 0.0)
 
         self.num_franka_bodies = self.gym.get_asset_rigid_body_count(franka_asset)
@@ -510,7 +516,7 @@ class FrankaPushing(VecTask):
     def compute_observations(self):
         self._refresh()
         obs = ["eef_pos", "eef_quat", "goal_pos"]
-        for j in range(self.n_cubes):
+        for j in range(self.n_observed_cubes):
             obs = obs + [f"cube{j}_quat", f"cube{j}_pos", f"cube{j}_vel"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
@@ -633,12 +639,12 @@ class FrankaPushing(VecTask):
         this_cube_state_all = self._init_cube_states[cube]
 
         # Sampling is "centered" around middle of table
-        centered_cube_xy_state = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
+        table_center = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
 
         # Set z value, which is fixed height
-        centered_cube_xy_state[2] = centered_cube_xy_state[2] + 0.15
+        table_center[2] = table_center[2] + 0.15
         if self.easy:
-            centered_cube_xy_state[2] = centered_cube_xy_state[2] - 0.1
+            table_center[2] = table_center[2] - 0.1
 
         # Initialize rotation, which is no rotation (quat w = 1)
         sampled_cube_state[:, 6] = 1.0
@@ -659,7 +665,7 @@ class FrankaPushing(VecTask):
             num_active_idx = len(active_idx)
             for i in range(100):
                 # Sample x y values
-                sampled_cube_state[active_idx, :3] = centered_cube_xy_state + \
+                sampled_cube_state[active_idx, :3] = table_center + \
                                                      2.0 * self.start_position_noise * (
                                                              torch.rand_like(sampled_cube_state[active_idx, :3]) - 0.5)
                 # Check if sampled values are valid
@@ -676,13 +682,12 @@ class FrankaPushing(VecTask):
             
         else:
             # We just directly sample
-            sampled_cube_state[:, :3] = centered_cube_xy_state.unsqueeze(0) + \
+            sampled_cube_state[:, :3] = table_center.unsqueeze(0) + \
                                               2.0 * self.start_position_noise * (
                                                       torch.rand(num_resets, 3, device=self.device) - 0.5)
     
-        tasks = [] 
-        height = -0.08
-        # TODO switch top right and bottom left
+        self.tasks = tasks = [] 
+        height = -0.115 # height at ground (1.06)
         center = np.array([.0, .0, height])
         left = np.array([.0, -.08, height])
         right = np.array([.0, .08, height])
@@ -692,26 +697,37 @@ class FrankaPushing(VecTask):
         bottom_left = np.array([.08, -.08, height])
         top_right = np.array([-.08, .08, height])
         top_left = np.array([-.08, -.08, height])
-        off = np.array([1, 1, 1])
+        off = np.array([0.3, 0.3, height])
 
+        tasks.append([top_left, off, off, off, off, off]) # push
         tasks.append([top_left, left, off, off, off, off]) # 1 cube blocking way
         tasks.append([top_left, left, center, off, off, off]) # 2 cubes blocking way
         tasks.append([top_left, left, center, right, off, off]) # 3 cubes blocking way
         tasks.append([top_left, bottom_left, off, off, off, off]) # 1 cube at the goal
         tasks.append([top_left, top, center, left, bottom, right]) # star
         tasks.append([top_left, bottom_right, left, bottom_left, bottom, center]) # 6 cubes blocking way
-        tasks.append([top_left, bottom_right, left, bottom_left, bottom, center]) # 6 cubes blocking way
-        tasks.append([top_left, bottom_right, left, bottom_left, bottom, center]) # 6 cubes blocking way
         tasks.append([top_left, left, bottom_left, [-0.08, -0.08, 0.0], bottom, center]) # star + cube on top
         tasks.append([[-0.08, -0.08, 0.0], left, bottom_left, top_left, bottom, center]) # star + red is on top
+        tasks.append([[.03, -.11, height], [.03, -.04, height], [-.05, -.11, height], off, off, off]) # tool use
+        tasks.append([top_left, [.04, -.11, height], [.11, -.04, height], off, off, off]) # insertion
+        tasks.append([center, [.07, -.11, height], [-.07, -.11, height], [.07, -.11, -0.045], [-.07, -.11, -0.045], [.0, -.11, -0.045], [.0, -.11, 0]]) # insertion 2
+        tasks.append([center, [-.11, .07, height], [-.11, -.07, height], [-.11, .07, -0.045], [-.11, -.07, -0.045], [-.11, .0, -0.045], [-.11, .0, 0]]) # insertion 3
+        tasks.append([center, [.07, -.11, height], [-.07, -.11, height], off, off, off, [.0, -.11, 0]]) # insertion 4
+        tolerance = 0.005; tasks.append([center, [.07 + tolerance, -.11, height], [-.07 - tolerance, -.11, height], off, off, off, [.0, -.11, 0]]) # tolerance
+        tolerance = 0.01; tasks.append([center, [.07 + tolerance, -.11, height], [-.07 - tolerance, -.11, height], off, off, off, [.0, -.11, 0]]) # tolerance
 
         if self.test:
             for t in range(len(tasks)):
                 for i in range(3):
-                    sampled_cube_state[t, i] = centered_cube_xy_state[i] + tasks[t][cube][i]
+                    sampled_cube_state[t, i] = table_center[i] + tasks[t][cube][i]
+
+        # Test specific task
+        if self.test_task >=0 and self.test:
+            for i in range(3):
+                sampled_cube_state[:, i] = table_center[i] + tasks[self.test_task][cube][i]
 
         # Sample rotation value
-        if self.start_rotation_noise > 0:
+        if not self.test and self.start_rotation_noise > 0:
             aa_rot = torch.zeros(num_resets, 3, device=self.device)
             aa_rot[:, 2] = 2.0 * self.start_rotation_noise * (torch.rand(num_resets, device=self.device) - 0.5)
             sampled_cube_state[:, 3:7] = quat_mul(axisangle2quat(aa_rot), sampled_cube_state[:, 3:7])
@@ -736,23 +752,33 @@ class FrankaPushing(VecTask):
         sampled_goal_state = torch.zeros(num_resets, 13, device=self.device)
 
         # Sampling is "centered" around middle of table
-        centered_goal_xyz_state = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
+        center = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
 
         # Set z value, which is fixed height
-        centered_goal_xyz_state[2] = centered_goal_xyz_state[2] + 0.05
+        center[2] = center[2] + 0.05
 
         # Initialize rotation, which is no rotation (quat w = 1)
         sampled_goal_state[:, 6] = 1.0
 
-        sampled_goal_state[:, :2] = centered_goal_xyz_state[:2].unsqueeze(0) + \
+        sampled_goal_state[:, :2] = center[:2].unsqueeze(0) + \
                                             2.0 * self.goal_position_noise * (
                                                     torch.rand(num_resets, 2, device=self.device) - 0.5)
-        sampled_goal_state[:, 2] = centered_goal_xyz_state[2]
+        sampled_goal_state[:, 2] = center[2]
 
         if self.test:
-            sampled_goal_state[:, 0] = centered_goal_xyz_state[0] + 0.08
-            sampled_goal_state[:, 1] = centered_goal_xyz_state[1] - 0.08
-            sampled_goal_state[:, 2] = centered_goal_xyz_state[2] 
+            sampled_goal_state[:, 0] = center[0] + 0.11
+            sampled_goal_state[:, 1] = center[1] - 0.11
+            sampled_goal_state[:, 2] = center[2] 
+            for t in range(len(self.tasks)):
+                if len(self.tasks[t]) > self.n_cubes:
+                    for i in range(3):
+                        sampled_goal_state[t, i] = center[i] + self.tasks[t][self.n_cubes][i]
+
+        # Test specific task
+        if self.test_task >=0 and self.test:
+            if len(self.tasks[self.test_task]) > self.n_cubes:
+                    for i in range(3):
+                        sampled_goal_state[:, i] = center[i] + self.tasks[self.test_task][self.n_cubes][i]
 
         # Lastly, set these sampled values as the new init state
         self._goal_state[env_ids, :] = sampled_goal_state
@@ -830,14 +856,14 @@ class FrankaPushing(VecTask):
 
         # Produce observation
         self.compute_observations()
-        if self.render_this_step():
-            self.compute_pixel_obs()
         self.rew_buf[:] = self.compute_franka_reward(self.states)
 
         # Extra logging
         if 'images' in self.extras:
             self.extras.pop("images")
+        # self.override_render = True
         if self.render_this_step():
+            self.compute_pixel_obs()
             self.extras["images"] = self.pix_buf
         metrics = dict()
         metrics["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)
