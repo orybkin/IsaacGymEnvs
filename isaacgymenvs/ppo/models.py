@@ -7,7 +7,7 @@ import rl_games.common.divergence as divergence
 from rl_games.common.extensions.distributions import CategoricalMasked
 from torch.distributions import Categorical
 from rl_games.algos_torch.sac_helper import SquashedNormal
-from rl_games.algos_torch.running_mean_std import RunningMeanStd, RunningMeanStdObs
+from isaacgymenvs.ppo.running_mean_std import RunningMeanStd, RunningMeanStdObs
 from rl_games.algos_torch.moving_mean_std import GeneralizedMovingStats
 
 class BaseModel():
@@ -260,6 +260,8 @@ class ModelA2CContinuousLogStd(BaseModel):
             prev_actions = input_dict.get('prev_actions', None)
             input_dict['obs'] = self.norm_obs(input_dict['obs'])
             mu, logstd, value, states = self.a2c_network(input_dict, value_index)
+            # mu = torch.zeros_like(mu)
+            # logstd = torch.zeros_like(logstd)
             sigma = torch.exp(logstd)
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
             if is_train:

@@ -774,6 +774,7 @@ class A2CBase(BaseAlgorithm):
 
         step_time = 0.0
 
+        # print(self.dones, 'before')
         for n in range(self.horizon_length):
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
@@ -793,6 +794,10 @@ class A2CBase(BaseAlgorithm):
             step_time_end = time.time()
 
             step_time += (step_time_end - step_time_start)
+            # env = self.vec_env.env
+            # obs = self.obs['obs']
+            # r_comp = env.compute_franka_reward({'goal_pos': obs[:, 7:10], env.target_name: obs[:, env.target_idx]})
+            # print(f'rewards {rewards.mean().item():.3f} {r_comp.mean().item():.3f}')
 
             shaped_rewards = self.rewards_shaper(rewards)
             if self.value_bootstrap and 'time_outs' in infos:
@@ -817,6 +822,8 @@ class A2CBase(BaseAlgorithm):
             self.current_shaped_rewards = self.current_shaped_rewards * not_dones.unsqueeze(1)
             self.current_lengths = self.current_lengths * not_dones
 
+        # print(self.current_rewards.mean())
+        # self.current_rewards = self.current_rewards * 0
         last_values = self.get_values(self.obs)
 
         fdones = self.dones.float()
@@ -825,6 +832,9 @@ class A2CBase(BaseAlgorithm):
         mb_rewards = self.experience_buffer.tensor_dict['rewards']
         mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
         mb_returns = mb_advs + mb_values
+        # print(f'returns: {mb_returns.mean([1,2])[0].item():.0f} values: {mb_values.mean([1,2])[0].item():.0f}, values norm: {self.value_mean_std(mb_values.mean([1,2])[0]).item():.3f}')
+        # if mb_advs.mean() < -5:
+        #     import pdb; pdb.set_trace()
 
         batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
         batch_dict['returns'] = swap_and_flatten01(mb_returns)
@@ -1225,6 +1235,9 @@ class ContinuousA2CBase(A2CBase):
     def relabel_batch(self, buffer):
         env = self.vec_env.env
         relabeled_buffer = copy.deepcopy(buffer)
+        # try:
+        #     relabeled_buffer = copy.deepcopy(self.cached_buffer)
+        # except: pass
 
         # Relabel states
         obs = relabeled_buffer.tensor_dict['obses']
@@ -1235,7 +1248,7 @@ class ContinuousA2CBase(A2CBase):
         idx = idx.flip(0).cumsum(0).flip(0)
         idx = idx[[0]] - idx
         # Compute last frame idx
-        ep_len = env.max_episode_length
+        
         idx = idx * ep_len + first_idx[None, :]
         idx = torch.minimum(idx, (obs.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
         goal = obs[:, :, env.target_idx]
@@ -1265,7 +1278,7 @@ class ContinuousA2CBase(A2CBase):
 
         # Rewards
         rewards = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
-        # TODO there is something funny about this - why the multiply by gamma?
+        # rewards_orig = env.compute_franka_reward({'goal_pos': buffer.tensor_dict['obses'][:, :, 7:10], env.target_name: buffer.tensor_dict['obses'][:, :, env.target_idx]})
         if self.value_bootstrap:
             rewards += self.gamma * relabeled_buffer.tensor_dict['values'] * relabeled_buffer.tensor_dict['dones'].unsqueeze(2).float()
         relabeled_buffer.tensor_dict['rewards'] = rewards
@@ -1278,9 +1291,13 @@ class ContinuousA2CBase(A2CBase):
         mb_rewards = relabeled_buffer.tensor_dict['rewards']
         mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
         mb_returns = mb_advs + mb_values
+
+        # print(f'relabeled returns: {mb_returns.mean([1,2])[0].item():.0f} values: {mb_values.mean([1,2])[0].item():.0f}')
         relabeled_batch = relabeled_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
         relabeled_batch['returns'] = swap_and_flatten01(mb_returns)
         relabeled_batch['played_frames'] = self.batch_size
+
+        # self.cached_buffer = copy.deepcopy(relabeled_buffer)
 
         return relabeled_buffer, relabeled_batch
 
@@ -1302,6 +1319,12 @@ class ContinuousA2CBase(A2CBase):
         self.set_train()
         self.curr_frames = batch_dict.pop('played_frames')
         self.prepare_dataset(batch_dict, self.dataset)
+
+        # Testing norm
+        # self.value_mean_std.train()
+        # self.value_mean_std(torch.randn_like(batch_dict['values']) * 60 + batch_dict['values'])
+        # self.value_mean_std(torch.randn_like(batch_dict['values']) * 60 + batch_dict['values'])
+        # self.value_mean_std.eval()
 
         kl_dataset = self.dataset
         if self.relabel:
