@@ -23,6 +23,7 @@ INSTALL_REQUIRES = [
     "rl-games>=1.6.0",
     "pyvirtualdisplay",
     "moviepy",
+    "gymnasium==3.3.0",
     ]
 
 

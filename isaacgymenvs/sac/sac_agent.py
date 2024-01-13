@@ -218,7 +218,6 @@ class SACAgent(BaseAlgorithm):
         return self._device
 
     def get_weights(self):
-        print("Loading weights")
         state = {'actor': self.model.sac_network.actor.state_dict(),
          'critic': self.model.sac_network.critic.state_dict(), 
          'critic_target': self.model.sac_network.critic_target.state_dict()}
@@ -237,7 +236,6 @@ class SACAgent(BaseAlgorithm):
             self.model.running_mean_std.load_state_dict(weights['running_mean_std'])
 
     def get_full_state_weights(self):
-        print("Loading full weights")
         state = self.get_weights()
 
         state['epoch'] = self.epoch_num
@@ -506,8 +504,9 @@ class SACAgent(BaseAlgorithm):
 
             if isinstance(next_obs, dict):    
                 next_obs_processed = next_obs['obs']
-
-            self.obs = next_obs.copy()
+                self.obs = next_obs.copy()
+            else:
+                self.obs = next_obs.clone()
 
             rewards = self.rewards_shaper(rewards)
 
@@ -565,9 +564,6 @@ class SACAgent(BaseAlgorithm):
             fps_step_inference = curr_frames / play_time
             fps_total = curr_frames / epoch_total_time
 
-            print_statistics(self.print_stats, curr_frames, step_time, play_time, epoch_total_time, 
-                self.epoch_num, self.max_epochs, self.frame, self.max_frames, self.game_rewards.get_mean())
-
             self.writer.add_scalar('performance/step_inference_rl_update_fps', fps_total, self.frame)
             self.writer.add_scalar('performance/step_inference_fps', fps_step_inference, self.frame)
             self.writer.add_scalar('performance/step_fps', fps_step, self.frame)
@@ -575,7 +571,10 @@ class SACAgent(BaseAlgorithm):
             self.writer.add_scalar('performance/step_inference_time', play_time, self.frame)
             self.writer.add_scalar('performance/step_time', step_time, self.frame)
             
-            if self.epoch_num % 10 == 0:
+            if self.epoch_num % 100 == 0:
+                print_statistics(self.print_stats, curr_frames, step_time, play_time, epoch_total_time, 
+                    self.epoch_num, self.max_epochs, self.frame, self.max_frames, self.game_rewards.get_mean())
+            
                 if self.epoch_num >= self.num_warmup_steps:
                     self.writer.add_scalar('losses/c1_loss', torch_ext.mean_list(critic1_losses).item(), self.frame)
                     self.writer.add_scalar('losses/c2_loss', torch_ext.mean_list(critic2_losses).item(), self.frame)
@@ -652,10 +651,12 @@ class SACAgent(BaseAlgorithm):
             self.vec_env.env.override_render = True
         self.vec_env.env.reset_idx()
         obs = self.obs
+        if isinstance(obs, dict):
+            obs = self.obs['obs'] 
 
         for n in range(self.vec_env.env.max_episode_length):
             with torch.no_grad():
-                action = self.act(obs['obs'].float(), self.env_info["action_space"].shape, sample=True)
+                action = self.act(obs.float(), self.env_info["action_space"].shape, sample=True)
         
             obs, rewards, dones, infos = self.env_step(action)
 
