@@ -35,7 +35,8 @@ from isaacgym import gymtorch
 from isaacgym import gymapi
 
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from gymnasium.envs.mujoco.hopper_v4 import HopperEnv
+from gymnasium.envs.mujoco import HopperEnv
+# from gymnasium.envs.mujoco import ReacherEnv as HopperEnv
 # from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
 # from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit, OrderEnforcing, PassiveEnvChecker
@@ -45,11 +46,12 @@ class MujocoHopper:
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         self.cfg = cfg
-        self.env = TimeLimit(OrderEnforcing(PassiveEnvChecker(HopperEnv())), max_episode_steps=1000)
+        self.max_episode_length = 1000
+        # self.max_episode_length = 50 # Reacher
+        self.env = TimeLimit(OrderEnforcing(PassiveEnvChecker(HopperEnv())), max_episode_steps=self.max_episode_length)
         self.action_space = self.env.action_space
         self.observation_space = self.env.observation_space
         self.num_states = 0
-        self.max_episode_length = 1000
         self.render_every_episodes = 10000000
 
     def reset(self):
@@ -59,7 +61,7 @@ class MujocoHopper:
         return self.reset()
 
     def step(self, actions):
-        obs, r, terminated, done, info = self.env.step(actions[0])
-        if done or terminated:
+        obs, r, terminated, truncated, info = self.env.step(actions[0])
+        if truncated or terminated:
             self.reset()
-        return obs[None], r[None], np.array(terminated or done)[None], {}
+        return obs[None], r[None], np.array(terminated or truncated)[None], {}

@@ -12,6 +12,7 @@ from isaacgymenvs.ppo import players
 from isaacgymenvs.ppo import a2c_continuous
 from isaacgymenvs.ppo import gc_a2c_continuous
 from isaacgymenvs.sac import sac_agent
+from isaacgymenvs.redq_original import redq_original_agent
 from rl_games.algos_torch import a2c_discrete
 from rl_games.common.algo_observer import DefaultAlgoObserver
 
@@ -39,13 +40,14 @@ class Runner:
         self.algo_factory.register_builder('gc_a2c_continuous', lambda **kwargs : gc_a2c_continuous.GCA2CAgent(**kwargs))
         self.algo_factory.register_builder('a2c_discrete', lambda **kwargs : a2c_discrete.DiscreteA2CAgent(**kwargs)) 
         self.algo_factory.register_builder('sac', lambda **kwargs: sac_agent.SACAgent(**kwargs))
+        self.algo_factory.register_builder('redq_original', lambda **kwargs: redq_original_agent.REDQAgent(**kwargs))
         #self.algo_factory.register_builder('dqn', lambda **kwargs : dqnagent.DQNAgent(**kwargs))
 
         self.player_factory = object_factory.ObjectFactory()
         self.player_factory.register_builder('gc_a2c_continuous', lambda **kwargs : players.PpoPlayerContinuous(**kwargs))
         self.player_factory.register_builder('a2c_continuous', lambda **kwargs : players.PpoPlayerContinuous(**kwargs))
         self.player_factory.register_builder('a2c_discrete', lambda **kwargs : players.PpoPlayerDiscrete(**kwargs))
-        self.player_factory.register_builder('sac', lambda **kwargs : players.SACPlayer(**kwargs))
+        self.player_factory.register_builder('redq_original', lambda **kwargs : players.SACPlayer(**kwargs))
         #self.player_factory.register_builder('dqn', lambda **kwargs : players.DQNPlayer(**kwargs))
 
         self.algo_observer = algo_observer if algo_observer else DefaultAlgoObserver()
