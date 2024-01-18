@@ -21,7 +21,7 @@ import os
 from collections import defaultdict
 
 from torch import Tensor
-from isaacgymenvs.redq_original.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2
+from isaacgymenvs.redq_original.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2, ReplayBuffer
 
 def get_probabilistic_num_min(num_mins):
     # allows the number of min to be a float
@@ -103,6 +103,7 @@ class REDQAgent():
         # set up replay buffer
         # set up other things
         self.mse_criterion = nn.MSELoss()
+        self.replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size, device=device)
 
         # store other hyperparameters
         self.start_steps = start_steps
@@ -123,15 +124,11 @@ class REDQAgent():
         self.q_target_mode = q_target_mode
         self.policy_update_delay = policy_update_delay
         self.device = device
+    
 
         # interface
         self.num_warmup_steps = self.delay_update_steps
 
-        # IG
-        self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
-                                                            self.env_info['action_space'].shape,
-                                                            self.replay_size,
-                                                            self._device)
         
 
     def load_networks(self, params):
@@ -385,7 +382,7 @@ class REDQAgent():
         self.mean_rewards = self.last_mean_rewards = -1000000000
         self.algo_observer.after_clear_stats()
 
-    def play_steps(self, random_exploration = False):
+    def play_steps1(self, random_exploration = False):
         total_time_start = time.time()
         total_update_time = 0
         total_time = 0
@@ -422,6 +419,8 @@ class REDQAgent():
 
             all_done_indices = dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
+            if len(done_indices) > 0:
+                print('return', self.current_rewards[done_indices])
             self.game_rewards.update(self.current_rewards[done_indices])
             self.game_lengths.update(self.current_lengths[done_indices])
 
@@ -442,7 +441,7 @@ class REDQAgent():
 
             rewards = self.rewards_shaper(rewards)
 
-            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs_processed, torch.unsqueeze(dones, 1))
+            self.replay_buffer.store(obs, action, torch.unsqueeze(rewards, 1), next_obs_processed, torch.unsqueeze(dones, 1))
 
             if isinstance(obs, dict):
                 obs = self.obs['obs']
@@ -464,6 +463,51 @@ class REDQAgent():
         play_time = total_time - total_update_time
 
         return step_time, play_time, total_update_time, total_time, actor_metrics, critic1_losses, critic2_losses
+
+
+    def get_exploration_action(self, obs, env):
+        # given an observation, output a sampled action in numpy form
+        with torch.no_grad():
+            if self.replay_buffer.size > self.start_steps:
+                obs_tensor = torch.Tensor(obs).unsqueeze(0).to(self.device)
+                action_tensor = self.policy_net.forward(obs_tensor, deterministic=False,
+                                             return_log_prob=False)[0]
+                action = action_tensor.cpu().numpy().reshape(-1)
+            else:
+                action = self.action_space.sample()
+        return action
+    
+    def play_steps(self, random_exploration = False):
+        o, r, d, ep_ret, ep_len = self.vec_env.reset(), 0, False, 0, 0
+
+        for t in range(100000):
+            # get action from agent
+            a = self.get_exploration_action(o, self.vec_env)
+            # Step the env, get next observation, reward and done signal
+            o2, r, d, _ = self.vec_env.step(a[None])
+
+            # Very important: before we let agent store this transition,
+            # Ignore the "done" signal if it comes from hitting the time
+            # horizon (that is, when it's an artificial terminal signal
+            # that isn't based on the agent's state)
+            ep_len += 1
+            self.frame += 1
+            d = False if ep_len == self.vec_env.env.max_episode_length else d
+
+            # give new data to agent
+            self.replay_buffer.store(o, a, r, o2, d)
+            # let agent update
+            self.update(0)
+            # set obs to next obs
+            o = o2
+            ep_ret += r
+
+            if d or (ep_len == self.vec_env.env.max_episode_length):
+                # store episode return and length to logger
+                # reset environment
+                print("steps", self.frame, "Episode Return: ", ep_ret)
+                return 1, 1, 1, 1, {}, {}, {}
+                o, r, d, ep_ret, ep_len = self.vec_env.reset(), 0, False, 0, 0
 
     def train_epoch(self):
         random_exploration = self.epoch_num < self.num_warmup_steps
@@ -562,13 +606,13 @@ class REDQAgent():
                     if should_exit:
                         return self.last_mean_rewards, self.epoch_num
                 
-            # Test
-            iteration = self.frame / self.num_actors
-            if test_check.check(iteration):
-                print("Testing...")
-                self.test(render=render_check.check(iteration))
-                self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time, '_test')
-                print("Done Testing.")
+            # # Test
+            # iteration = self.frame / self.num_actors
+            # if test_check.check(iteration):
+            #     print("Testing...")
+            #     self.test(render=render_check.check(iteration))
+            #     self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time, '_test')
+            #     print("Done Testing.")
 
     def test(self, render):
         self.set_eval()
@@ -640,6 +684,11 @@ class REDQAgent():
         return y_q, sample_idxs
 
 
+    def sample_data(self, batch_size):
+        # sample data from replay buffer
+        batch = self.replay_buffer.sample_batch(batch_size)
+        return batch['obs1'], batch['obs2'], batch['acts'], batch['rews'].unsqueeze(1), batch['done'].unsqueeze(1)
+    
     def update(self, step):
         # this function is called after each datapoint collected.
         # when we only have very limited data, we don't make updates
@@ -648,10 +697,7 @@ class REDQAgent():
         for i_update in range(num_update):
             self.update_num += 1
 
-            obs_tensor, acts_tensor, rews_tensor, obs_next_tensor, done_tensor = self.replay_buffer.sample(self.batch_size)
-            obs_tensor = self.preproc_obs(obs_tensor)
-            obs_next_tensor = self.preproc_obs(obs_next_tensor)
-            done_tensor = done_tensor.to(torch.float32)
+            obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(self.batch_size)
 
             """Q loss"""
             y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)

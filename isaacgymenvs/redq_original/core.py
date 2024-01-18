@@ -27,29 +27,38 @@ class ReplayBuffer:
     """
     A simple FIFO experience replay buffer
     """
-    def __init__(self, obs_dim, act_dim, size):
+    def __init__(self, obs_dim, act_dim, size, device):
         """
         :param obs_dim: size of observation
         :param act_dim: size of the action
         :param size: size of the buffer
         """
         ## init buffers as numpy arrays
-        self.obs1_buf = np.zeros([size, obs_dim], dtype=np.float32)
-        self.obs2_buf = np.zeros([size, obs_dim], dtype=np.float32)
-        self.acts_buf = np.zeros([size, act_dim], dtype=np.float32)
-        self.rews_buf = np.zeros(size, dtype=np.float32)
-        self.done_buf = np.zeros(size, dtype=np.float32)
+        self.obs1_buf = torch.zeros([size, obs_dim], dtype=torch.float32, device=device)
+        self.obs2_buf = torch.zeros([size, obs_dim], dtype=torch.float32, device=device)
+        self.acts_buf = torch.zeros([size, act_dim], dtype=torch.float32, device=device)
+        self.rews_buf = torch.zeros(size, dtype=torch.float32, device=device)
+        self.done_buf = torch.zeros(size, dtype=torch.float32, device=device)
         self.ptr, self.size, self.max_size = 0, 0, size
+        self.device = device
 
     def store(self, obs, act, rew, next_obs, done):
         """
         data will get stored in the pointer's location
         """
-        self.obs1_buf[self.ptr] = obs
-        self.obs2_buf[self.ptr] = next_obs
-        self.acts_buf[self.ptr] = act
-        self.rews_buf[self.ptr] = rew
-        self.done_buf[self.ptr] = done
+        if isinstance(obs, np.ndarray):
+            device = self.device
+            self.obs1_buf[self.ptr] = torch.Tensor(obs).to(device=device)
+            self.obs2_buf[self.ptr] = torch.Tensor(next_obs).to(device=device)
+            self.acts_buf[self.ptr] = torch.Tensor(act).to(device=device)
+            self.rews_buf[self.ptr] = torch.Tensor(rew).to(device=device)
+            self.done_buf[self.ptr] = torch.Tensor(done).to(device=device)
+        else:
+            self.obs1_buf[self.ptr] = obs
+            self.obs2_buf[self.ptr] = next_obs
+            self.acts_buf[self.ptr] = act
+            self.rews_buf[self.ptr] = rew
+            self.done_buf[self.ptr] = done
         ## move the pointer to store in next location in buffer
         self.ptr = (self.ptr+1) % self.max_size
         ## keep track of the current buffer size
