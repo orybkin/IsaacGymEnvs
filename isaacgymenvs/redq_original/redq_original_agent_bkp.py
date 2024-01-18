@@ -346,7 +346,7 @@ class REDQAgent():
         return upd_obs
 
     def preprocess_actions(self, actions):
-        if not self.is_tensor_obses and isinstance(actions, torch.Tensor):
+        if not self.is_tensor_obses:
             actions = actions.cpu().numpy()
 
         return actions
@@ -382,7 +382,7 @@ class REDQAgent():
         self.mean_rewards = self.last_mean_rewards = -1000000000
         self.algo_observer.after_clear_stats()
 
-    def play_steps(self, random_exploration = False):
+    def play_steps1(self, random_exploration = False):
         total_time_start = time.time()
         total_update_time = 0
         total_time = 0
@@ -464,24 +464,28 @@ class REDQAgent():
 
         return step_time, play_time, total_update_time, total_time, actor_metrics, critic1_losses, critic2_losses
 
-    def play_steps2(self, random_exploration = False):
-        o, rewards, dones, ep_ret, ep_len = self.env_reset(), 0, False, 0, 0
+
+    def get_exploration_action(self, obs, env):
+        # given an observation, output a sampled action in numpy form
+        with torch.no_grad():
+            if self.replay_buffer.size > self.start_steps:
+                obs_tensor = torch.Tensor(obs).unsqueeze(0).to(self.device)
+                action_tensor = self.policy_net.forward(obs_tensor, deterministic=False,
+                                             return_log_prob=False)[0]
+                action = action_tensor.cpu().numpy().reshape(-1)
+            else:
+                action = self.action_space.sample()
+        return action
+    
+    def play_steps(self, random_exploration = False):
+        o, r, d, ep_ret, ep_len = self.vec_env.reset(), 0, False, 0, 0
 
         for t in range(100000):
-            if isinstance(o, dict):
-                o = o['obs']
-
-            if self.replay_buffer.size < self.start_steps:
-                action = torch.rand((self.num_actors, *self.env_info["action_space"].shape), device=self._device) * 2.0 - 1.0
-            else:
-                with torch.no_grad():
-                    action = self.act(o.float(), self.env_info["action_space"].shape, sample=True)  
-
-            with torch.no_grad():
-                next_obs, rewards, dones, infos = self.env_step(action)  
-
-            if isinstance(next_obs, dict): 
-                next_obs = next_obs['obs']
+            # get action from agent
+            a = self.get_exploration_action(o, self.vec_env)
+            # Step the env, get next observation, reward and done signal
+            o2, r, d, _ = self.vec_env.step(a[None])
+            import pdb; pdb.set_trace()
 
             # Very important: before we let agent store this transition,
             # Ignore the "done" signal if it comes from hitting the time
@@ -489,39 +493,22 @@ class REDQAgent():
             # that isn't based on the agent's state)
             ep_len += 1
             self.frame += 1
-            dones = False if ep_len == self.vec_env.env.max_episode_length else dones
+            d = False if ep_len == self.vec_env.env.max_episode_length else d
 
             # give new data to agent
-            self.replay_buffer.store(o, action, rewards, next_obs, dones)
+            self.replay_buffer.store(o, a, r, o2, d)
             # let agent update
             self.update(0)
             # set obs to next obs
-            o = next_obs
-            ep_ret += rewards
+            o = o2
+            ep_ret += r
 
-            if dones or (ep_len == self.vec_env.env.max_episode_length):
+            if d or (ep_len == self.vec_env.env.max_episode_length):
                 # store episode return and length to logger
                 # reset environment
                 print("steps", self.frame, "Episode Return: ", ep_ret)
                 return 1, 1, 1, 1, {}, {}, {}
-                o, rewards, dones, ep_ret, ep_len = self.vec_env.reset(), 0, False, 0, 0
-
-    def get_exploration_action(self, obs, env):
-        # given an observation, output a sampled action in numpy form
-        with torch.no_grad():
-            if self.replay_buffer.size > self.start_steps:
-                if isinstance(obs, np.ndarray):
-                    obs = torch.Tensor(obs).to(self.device)
-                obs = obs.unsqueeze(0)
-                # action_tensor = self.policy_net.forward(obs, deterministic=False,
-                #                              return_log_prob=False)[0]
-                action_tensor = self.act(obs[0], self.env_info["action_space"].shape, sample=True)
-                action = action_tensor.cpu().numpy().reshape(-1)
-            else:
-                # action = self.action_space.sample()
-                action = torch.rand(self.env_info["action_space"].shape, device=self._device) * 2.0 - 1.0
-        return action
-    
+                o, r, d, ep_ret, ep_len = self.vec_env.reset(), 0, False, 0, 0
 
     def train_epoch(self):
         random_exploration = self.epoch_num < self.num_warmup_steps

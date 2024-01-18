@@ -46,19 +46,13 @@ class ReplayBuffer:
         """
         data will get stored in the pointer's location
         """
-        if isinstance(obs, np.ndarray):
-            device = self.device
-            self.obs1_buf[self.ptr] = torch.Tensor(obs).to(device=device)
-            self.obs2_buf[self.ptr] = torch.Tensor(next_obs).to(device=device)
-            self.acts_buf[self.ptr] = torch.Tensor(act).to(device=device)
-            self.rews_buf[self.ptr] = torch.Tensor(rew).to(device=device)
-            self.done_buf[self.ptr] = torch.Tensor(done).to(device=device)
-        else:
-            self.obs1_buf[self.ptr] = obs
-            self.obs2_buf[self.ptr] = next_obs
-            self.acts_buf[self.ptr] = act
-            self.rews_buf[self.ptr] = rew
-            self.done_buf[self.ptr] = done
+        to_tensor = lambda x: torch.Tensor(x).to(device=self.device) if isinstance(x, np.ndarray) else x
+        
+        self.obs1_buf[self.ptr] = to_tensor(obs)
+        self.obs2_buf[self.ptr] = to_tensor(next_obs)
+        self.acts_buf[self.ptr] = to_tensor(act)
+        self.rews_buf[self.ptr] = to_tensor(rew)
+        self.done_buf[self.ptr] = to_tensor(done)
         ## move the pointer to store in next location in buffer
         self.ptr = (self.ptr+1) % self.max_size
         ## keep track of the current buffer size
