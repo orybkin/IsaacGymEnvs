@@ -66,4 +66,4 @@ class MujocoHopper:
         obs, r, terminated, truncated, info = self.env.step(actions[0])
         if truncated or terminated:
             self.reset()
-        return obs[None], r[None], np.array(terminated or truncated)[None], {}
+        return obs[None], r[None], np.array(terminated)[None], np.array(truncated)[None], {}

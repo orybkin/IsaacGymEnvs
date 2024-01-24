@@ -103,7 +103,11 @@ class REDQAgent():
         # set up replay buffer
         # set up other things
         self.mse_criterion = nn.MSELoss()
-        self.replay_buffer = ReplayBuffer(obs_dim=obs_dim, act_dim=act_dim, size=replay_size, device=device)
+
+        self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
+                                                               self.env_info['action_space'].shape,
+                                                               replay_size,
+                                                               self._device)
 
         # store other hyperparameters
         self.start_steps = start_steps
@@ -353,12 +357,12 @@ class REDQAgent():
 
     def env_step(self, actions):
         actions = self.preprocess_actions(actions)
-        obs, rewards, dones, infos = self.vec_env.step(actions) # (obs_space) -> (n, obs_space)
+        obs, rewards, terminated, truncated, infos = self.vec_env.step(actions) # (obs_space) -> (n, obs_space)
 
         if self.is_tensor_obses:
-            return self.obs_to_tensors(obs), rewards.to(self._device), dones.to(self._device), infos
+            return self.obs_to_tensors(obs), rewards.to(self._device), terminated.to(self._device), truncated.to(self._device), infos
         else:
-            return torch.from_numpy(obs).to(self._device), torch.from_numpy(rewards).to(self._device), torch.from_numpy(dones).to(self._device), infos
+            return torch.from_numpy(obs).to(self._device), torch.from_numpy(rewards).to(self._device), torch.from_numpy(terminated).to(self._device), torch.from_numpy(truncated).to(self._device), infos
 
     def env_reset(self):
         with torch.no_grad():
@@ -391,9 +395,9 @@ class REDQAgent():
         critic1_losses = []
         critic2_losses = []
 
-        obs = self.obs
 
         for s in range(self.num_steps_per_episode):
+            obs = self.obs
             if isinstance(obs, dict):
                 obs = obs['obs']
             self.set_eval()
@@ -406,8 +410,10 @@ class REDQAgent():
             step_start = time.time()
 
             with torch.no_grad():
-                next_obs, rewards, dones, infos = self.env_step(action)
-            # TODO - termination vs truncation
+                next_obs, rewards, terminated, truncated, infos = self.env_step(action)
+
+            # TODO do not train on first transition after reset
+
             if isinstance(next_obs, dict):
                 next_obs = next_obs['obs']
             step_end = time.time()
@@ -418,6 +424,7 @@ class REDQAgent():
             total_time += (step_end - step_start)
             step_time += (step_end - step_start)
 
+            dones = terminated + truncated
             all_done_indices = dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
             if len(done_indices) > 0:
@@ -425,22 +432,18 @@ class REDQAgent():
             self.game_rewards.update(self.current_rewards[done_indices])
             self.game_lengths.update(self.current_lengths[done_indices])
 
-            not_dones = 1.0 - dones.float()
+            mask = 1.0 - terminated.float()
 
             self.algo_observer.process_infos(infos, done_indices)
 
-            dones = dones
-
-            self.current_rewards = self.current_rewards * not_dones
-            self.current_lengths = self.current_lengths * not_dones
+            self.current_rewards = self.current_rewards * (1 - dones.float())
+            self.current_lengths = self.current_lengths * (1 - dones.float())
 
             self.obs = next_obs.clone()
 
-            rewards = self.rewards_shaper(rewards)
+            # rewards = self.rewards_shaper(rewards)
 
-            self.replay_buffer.store(obs, action, torch.unsqueeze(rewards, 1), next_obs_processed, torch.unsqueeze(dones, 1))
-
-            obs = self.obs
+            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(mask, 1))
 
             if not random_exploration:
                 self.set_train()
@@ -453,6 +456,9 @@ class REDQAgent():
                 update_time = 0
 
             total_update_time += update_time
+
+            if dones[0]:
+                self.obs = self.env_reset()
 
         total_time_end = time.time()
         total_time = total_time_end - total_time_start
@@ -474,7 +480,7 @@ class REDQAgent():
                     action = self.act(o.float(), self.env_info["action_space"].shape, sample=True)  
 
             with torch.no_grad():
-                next_obs, rewards, dones, infos = self.env_step(action)  
+                next_obs, rewards, dones, _, infos = self.env_step(action)  
 
             if isinstance(next_obs, dict): 
                 next_obs = next_obs['obs']
@@ -488,7 +494,7 @@ class REDQAgent():
             dones = False if ep_len == self.vec_env.env.max_episode_length else dones
 
             # give new data to agent
-            self.replay_buffer.store(o, action, rewards, next_obs, dones)
+            self.replay_buffer.add(o, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(dones, 1))
             # let agent update
             self.update(0)
             # set obs to next obs
@@ -707,7 +713,8 @@ class REDQAgent():
         for i_update in range(num_update):
             self.update_num += 1
 
-            obs_tensor, obs_next_tensor, acts_tensor, rews_tensor, done_tensor = self.sample_data(self.batch_size)
+            obs_tensor, acts_tensor, rews_tensor, obs_next_tensor, done_tensor = self.replay_buffer.sample(self.batch_size)
+            done_tensor = done_tensor.float()
 
             """Q loss"""
             y_q, sample_idxs = self.get_redq_q_target_no_grad(obs_next_tensor, rews_tensor, done_tensor)
