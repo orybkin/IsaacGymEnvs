@@ -395,7 +395,6 @@ class REDQAgent():
         critic1_losses = []
         critic2_losses = []
 
-
         for s in range(self.num_steps_per_episode):
             obs = self.obs
             if isinstance(obs, dict):
@@ -411,8 +410,6 @@ class REDQAgent():
 
             with torch.no_grad():
                 next_obs, rewards, terminated, truncated, infos = self.env_step(action)
-
-            # TODO do not train on first transition after reset
 
             if isinstance(next_obs, dict):
                 next_obs = next_obs['obs']
@@ -432,8 +429,6 @@ class REDQAgent():
             self.game_rewards.update(self.current_rewards[done_indices])
             self.game_lengths.update(self.current_lengths[done_indices])
 
-            mask = 1.0 - terminated.float()
-
             self.algo_observer.process_infos(infos, done_indices)
 
             self.current_rewards = self.current_rewards * (1 - dones.float())
@@ -443,7 +438,7 @@ class REDQAgent():
 
             # rewards = self.rewards_shaper(rewards)
 
-            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(mask, 1))
+            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1))
 
             if not random_exploration:
                 self.set_train()
@@ -465,6 +460,42 @@ class REDQAgent():
         play_time = total_time - total_update_time
 
         return step_time, play_time, total_update_time, total_time, actor_metrics, critic1_losses, critic2_losses
+
+
+    def play_steps1_working(self, random_exploration = False):
+        for s in range(self.num_steps_per_episode):
+            obs = self.obs
+            if isinstance(obs, dict):
+                obs = obs['obs']
+
+            if self.replay_buffer.size < self.start_steps:
+                action = torch.rand((self.num_actors, *self.env_info["action_space"].shape), device=self._device) * 2.0 - 1.0
+            else:
+                with torch.no_grad():
+                    action = self.act(obs.float(), self.env_info["action_space"].shape, sample=True)
+
+            with torch.no_grad():
+                next_obs, rewards, terminated, truncated, infos = self.env_step(action)
+            self.ep_ret += rewards
+
+            if isinstance(next_obs, dict):
+                next_obs = next_obs['obs']
+
+            dones = terminated + truncated  
+            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1))
+
+            if self.replay_buffer.size >= self.start_steps:
+                self.update(self.epoch_num)
+
+            self.obs = next_obs.clone()
+            if dones[0]:
+                print('return', self.ep_ret)
+                self.obs = self.env_reset()
+                self.ep_ret = 0
+        
+        self.frame += self.num_frames_per_epoch
+
+        return 1, 1, 1, 1, {}, {}, {}
 
     def play_steps2(self, random_exploration = False):
         o, rewards, dones, ep_ret, ep_len = self.env_reset(), 0, False, 0, 0
