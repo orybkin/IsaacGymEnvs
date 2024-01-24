@@ -392,12 +392,10 @@ class REDQAgent():
         critic2_losses = []
 
         obs = self.obs
-        if isinstance(obs, dict):
-            obs = self.obs['obs']
-
-        next_obs_processed = obs.clone()
 
         for s in range(self.num_steps_per_episode):
+            if isinstance(obs, dict):
+                obs = obs['obs']
             self.set_eval()
             if random_exploration:
                 action = torch.rand((self.num_actors, *self.env_info["action_space"].shape), device=self._device) * 2.0 - 1.0
@@ -409,6 +407,9 @@ class REDQAgent():
 
             with torch.no_grad():
                 next_obs, rewards, dones, infos = self.env_step(action)
+            # TODO - termination vs truncation
+            if isinstance(next_obs, dict):
+                next_obs = next_obs['obs']
             step_end = time.time()
 
             self.current_rewards += rewards
@@ -433,18 +434,13 @@ class REDQAgent():
             self.current_rewards = self.current_rewards * not_dones
             self.current_lengths = self.current_lengths * not_dones
 
-            if isinstance(next_obs, dict):    
-                next_obs_processed = next_obs['obs']
-                self.obs = next_obs.copy()
-            else:
-                self.obs = next_obs.clone()
+            self.obs = next_obs.clone()
 
             rewards = self.rewards_shaper(rewards)
 
             self.replay_buffer.store(obs, action, torch.unsqueeze(rewards, 1), next_obs_processed, torch.unsqueeze(dones, 1))
 
-            if isinstance(obs, dict):
-                obs = self.obs['obs']
+            obs = self.obs
 
             if not random_exploration:
                 self.set_train()
