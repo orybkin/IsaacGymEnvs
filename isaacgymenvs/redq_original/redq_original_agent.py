@@ -54,16 +54,19 @@ class REDQAgent():
         act_dim = self.action_space.shape[0]
         act_limit = self.action_space.high[0].item()
         device = config.get('device', 'cuda:0')
-        self.num_frames_per_epoch = 1
+        self.num_frames_per_epoch = self.num_actors
         self.action_range = [
             float(self.env_info['action_space'].low.min()),
             float(self.env_info['action_space'].high.max())
         ]
 
         # REDQ
-        hidden_sizes=(256, 256)
-        replay_size=int(1e6)
-        batch_size=256
+        self.replay_size = config["replay_buffer_size"]
+        self.batch_size=config["batch_size"]
+        self.utd_ratio=config.get("gradient_steps", 1)
+        self.relabel_ratio = config.get("relabel_ratio", 0.0)
+        self.entropy_backup = config.get("entropy_backup", True)
+        hidden_sizes=params['network']['mlp']['units']
         lr=3e-4
         gamma=0.99
         polyak=0.995
@@ -71,10 +74,10 @@ class REDQAgent():
         auto_alpha=True
         start_steps=5000
         delay_update_steps='auto'
-        utd_ratio=1
         num_Q=2
+        # utd_ratio=20
+        # num_Q=10
         num_min=2
-        q_target_mode='min'
         policy_update_delay=20
         # set up networks
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
@@ -104,10 +107,19 @@ class REDQAgent():
         # set up other things
         self.mse_criterion = nn.MSELoss()
 
-        self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
-                                                               self.env_info['action_space'].shape,
-                                                               replay_size,
-                                                               self._device)
+        if self.relabel_ratio > 0.0:
+            self.replay_buffer = her_replay_buffer.HERReplayBuffer(self.env_info['observation_space'].shape,
+                                                                self.env_info['action_space'].shape,
+                                                                self.replay_size,
+                                                                self.num_actors,
+                                                                self._device,
+                                                                self.vec_env.env,
+                                                                self.relabel_ratio)
+        else:
+            self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
+                                                                self.env_info['action_space'].shape,
+                                                                self.replay_size,
+                                                                self._device)
 
         # store other hyperparameters
         self.start_steps = start_steps
@@ -118,14 +130,10 @@ class REDQAgent():
         self.hidden_sizes = hidden_sizes
         self.gamma = gamma
         self.polyak = polyak
-        self.replay_size = replay_size
         self.alpha = alpha
-        self.batch_size = batch_size
         self.num_min = num_min
         self.num_Q = num_Q
-        self.utd_ratio = utd_ratio
         self.delay_update_steps = self.start_steps if delay_update_steps == 'auto' else delay_update_steps
-        self.q_target_mode = q_target_mode
         self.policy_update_delay = policy_update_delay
         self.device = device
     
@@ -191,6 +199,7 @@ class REDQAgent():
         self.last_mean_rewards = -1000000000
         self.play_time = 0
         self.update_num = 0
+        self.ep_ret = 0
 
         # TODO: put it into the separate class
         pbt_str = ''
@@ -362,7 +371,7 @@ class REDQAgent():
         if self.is_tensor_obses:
             return self.obs_to_tensors(obs), rewards.to(self._device), terminated.to(self._device), truncated.to(self._device), infos
         else:
-            return torch.from_numpy(obs).to(self._device), torch.from_numpy(rewards).to(self._device), torch.from_numpy(terminated).to(self._device), torch.from_numpy(truncated).to(self._device), infos
+            return torch.from_numpy(obs).to(self._device).float(), torch.from_numpy(rewards).to(self._device), torch.from_numpy(terminated).to(self._device), torch.from_numpy(truncated).to(self._device), infos
 
     def env_reset(self):
         with torch.no_grad():
@@ -413,6 +422,7 @@ class REDQAgent():
 
             if isinstance(next_obs, dict):
                 next_obs = next_obs['obs']
+
             step_end = time.time()
 
             self.current_rewards += rewards
@@ -424,8 +434,8 @@ class REDQAgent():
             dones = terminated + truncated
             all_done_indices = dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
-            if len(done_indices) > 0:
-                print('return', self.current_rewards[done_indices])
+            # if len(done_indices) > 0:
+            #     print('return', self.current_rewards[done_indices])
             self.game_rewards.update(self.current_rewards[done_indices])
             self.game_lengths.update(self.current_lengths[done_indices])
 
@@ -436,14 +446,13 @@ class REDQAgent():
 
             self.obs = next_obs.clone()
 
-            # rewards = self.rewards_shaper(rewards)
-
             self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1))
 
             if not random_exploration:
                 self.set_train()
                 update_time_start = time.time()
                 actor_loss_info, critic1_loss, critic2_loss = self.update(self.epoch_num)
+                critic1_losses.append(critic1_loss)
                 for key, value in actor_loss_info.items(): actor_metrics[key].append(value)
                 update_time_end = time.time()
                 update_time = update_time_end - update_time_start
@@ -452,92 +461,18 @@ class REDQAgent():
 
             total_update_time += update_time
 
-            if dones[0]:
-                self.obs = self.env_reset()
+            if dones.any():
+                obs = self.env_reset()
+                if isinstance(obs, dict):
+                    obs = obs['obs']
+                self.obs[dones.bool()] = obs[dones.bool()]
 
         total_time_end = time.time()
         total_time = total_time_end - total_time_start
         play_time = total_time - total_update_time
-
-        return step_time, play_time, total_update_time, total_time, actor_metrics, critic1_losses, critic2_losses
-
-
-    def play_steps1_working(self, random_exploration = False):
-        for s in range(self.num_steps_per_episode):
-            obs = self.obs
-            if isinstance(obs, dict):
-                obs = obs['obs']
-
-            if self.replay_buffer.size < self.start_steps:
-                action = torch.rand((self.num_actors, *self.env_info["action_space"].shape), device=self._device) * 2.0 - 1.0
-            else:
-                with torch.no_grad():
-                    action = self.act(obs.float(), self.env_info["action_space"].shape, sample=True)
-
-            with torch.no_grad():
-                next_obs, rewards, terminated, truncated, infos = self.env_step(action)
-            self.ep_ret += rewards
-
-            if isinstance(next_obs, dict):
-                next_obs = next_obs['obs']
-
-            dones = terminated + truncated  
-            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1))
-
-            if self.replay_buffer.size >= self.start_steps:
-                self.update(self.epoch_num)
-
-            self.obs = next_obs.clone()
-            if dones[0]:
-                print('return', self.ep_ret)
-                self.obs = self.env_reset()
-                self.ep_ret = 0
-        
         self.frame += self.num_frames_per_epoch
 
-        return 1, 1, 1, 1, {}, {}, {}
-
-    def play_steps2(self, random_exploration = False):
-        o, rewards, dones, ep_ret, ep_len = self.env_reset(), 0, False, 0, 0
-
-        for t in range(100000):
-            if isinstance(o, dict):
-                o = o['obs']
-
-            if self.replay_buffer.size < self.start_steps:
-                action = torch.rand((self.num_actors, *self.env_info["action_space"].shape), device=self._device) * 2.0 - 1.0
-            else:
-                with torch.no_grad():
-                    action = self.act(o.float(), self.env_info["action_space"].shape, sample=True)  
-
-            with torch.no_grad():
-                next_obs, rewards, dones, _, infos = self.env_step(action)  
-
-            if isinstance(next_obs, dict): 
-                next_obs = next_obs['obs']
-
-            # Very important: before we let agent store this transition,
-            # Ignore the "done" signal if it comes from hitting the time
-            # horizon (that is, when it's an artificial terminal signal
-            # that isn't based on the agent's state)
-            ep_len += 1
-            self.frame += 1
-            dones = False if ep_len == self.vec_env.env.max_episode_length else dones
-
-            # give new data to agent
-            self.replay_buffer.add(o, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(dones, 1))
-            # let agent update
-            self.update(0)
-            # set obs to next obs
-            o = next_obs
-            ep_ret += rewards
-
-            if dones or (ep_len == self.vec_env.env.max_episode_length):
-                # store episode return and length to logger
-                # reset environment
-                print("steps", self.frame, "Episode Return: ", ep_ret)
-                return 1, 1, 1, 1, {}, {}, {}
-                o, rewards, dones, ep_ret, ep_len = self.vec_env.reset(), 0, False, 0, 0
+        return step_time, play_time, total_update_time, total_time, actor_metrics, critic1_losses, critic2_losses
 
     def get_exploration_action(self, obs, env):
         # given an observation, output a sampled action in numpy form
@@ -557,7 +492,7 @@ class REDQAgent():
     
 
     def train_epoch(self):
-        random_exploration = self.epoch_num < self.num_warmup_steps
+        random_exploration = self.frame < self.num_warmup_steps
         return self.play_steps(random_exploration)
 
     def train(self):
@@ -577,7 +512,6 @@ class REDQAgent():
             total_time += epoch_total_time
 
             curr_frames = self.num_frames_per_epoch
-            self.frame += curr_frames
 
             fps_step = curr_frames / step_time
             fps_step_inference = curr_frames / play_time
@@ -594,7 +528,8 @@ class REDQAgent():
                 print_statistics(self.print_stats, curr_frames, step_time, play_time, epoch_total_time, 
                     self.epoch_num, self.max_epochs, self.frame, self.max_frames, self.game_rewards.get_mean())
 
-                if self.epoch_num >= self.num_warmup_steps:
+                if self.frame >= self.num_warmup_steps:
+                    self.writer.add_scalar('losses/c1_loss', torch_ext.mean_list(critic1_losses).item(), self.frame)
                     for key, value in actor_metrics.items():
                         if value[0] is not None:
                             self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
@@ -692,42 +627,18 @@ class REDQAgent():
         num_mins_to_use = get_probabilistic_num_min(self.num_min)
         sample_idxs = np.random.choice(self.num_Q, num_mins_to_use, replace=False)
         with torch.no_grad():
-            if self.q_target_mode == 'min':
-                """Q target is min of a subset of Q values"""
-                a_tilda_next, _, _, log_prob_a_tilda_next, _, _ = self.policy_net.forward(obs_next_tensor)
-                q_prediction_next_list = []
-                for sample_idx in sample_idxs:
-                    q_prediction_next = self.q_target_net_list[sample_idx](torch.cat([obs_next_tensor, a_tilda_next], 1))
-                    q_prediction_next_list.append(q_prediction_next)
-                q_prediction_next_cat = torch.cat(q_prediction_next_list, 1)
-                min_q, min_indices = torch.min(q_prediction_next_cat, dim=1, keepdim=True)
+            """Q target is min of a subset of Q values"""
+            a_tilda_next, _, _, log_prob_a_tilda_next, _, _ = self.policy_net.forward(obs_next_tensor)
+            q_prediction_next_list = []
+            for sample_idx in sample_idxs:
+                q_prediction_next = self.q_target_net_list[sample_idx](torch.cat([obs_next_tensor, a_tilda_next], 1))
+                q_prediction_next_list.append(q_prediction_next)
+            q_prediction_next_cat = torch.cat(q_prediction_next_list, 1)
+            min_q, min_indices = torch.min(q_prediction_next_cat, dim=1, keepdim=True)
+            next_q_with_log_prob = min_q
+            if self.entropy_backup:
                 next_q_with_log_prob = min_q - self.alpha * log_prob_a_tilda_next
-                y_q = rews_tensor + self.gamma * (1 - done_tensor) * next_q_with_log_prob
-            if self.q_target_mode == 'ave':
-                """Q target is average of all Q values"""
-                a_tilda_next, _, _, log_prob_a_tilda_next, _, _ = self.policy_net.forward(obs_next_tensor)
-                q_prediction_next_list = []
-                for q_i in range(self.num_Q):
-                    q_prediction_next = self.q_target_net_list[q_i](torch.cat([obs_next_tensor, a_tilda_next], 1))
-                    q_prediction_next_list.append(q_prediction_next)
-                q_prediction_next_ave = torch.cat(q_prediction_next_list, 1).mean(dim=1).reshape(-1, 1)
-                next_q_with_log_prob = q_prediction_next_ave - self.alpha * log_prob_a_tilda_next
-                y_q = rews_tensor + self.gamma * (1 - done_tensor) * next_q_with_log_prob
-            if self.q_target_mode == 'rem':
-                """Q target is random ensemble mixture of Q values"""
-                a_tilda_next, _, _, log_prob_a_tilda_next, _, _ = self.policy_net.forward(obs_next_tensor)
-                q_prediction_next_list = []
-                for q_i in range(self.num_Q):
-                    q_prediction_next = self.q_target_net_list[q_i](torch.cat([obs_next_tensor, a_tilda_next], 1))
-                    q_prediction_next_list.append(q_prediction_next)
-                # apply rem here
-                q_prediction_next_cat = torch.cat(q_prediction_next_list, 1)
-                rem_weight = Tensor(np.random.uniform(0, 1, q_prediction_next_cat.shape)).to(device=self.device)
-                normalize_sum = rem_weight.sum(1).reshape(-1, 1).expand(-1, self.num_Q)
-                rem_weight = rem_weight / normalize_sum
-                q_prediction_next_rem = (q_prediction_next_cat * rem_weight).sum(dim=1).reshape(-1, 1)
-                next_q_with_log_prob = q_prediction_next_rem - self.alpha * log_prob_a_tilda_next
-                y_q = rews_tensor + self.gamma * (1 - done_tensor) * next_q_with_log_prob
+            y_q = rews_tensor + self.gamma * (1 - done_tensor) * next_q_with_log_prob
         return y_q, sample_idxs
 
 
@@ -740,7 +651,8 @@ class REDQAgent():
         # this function is called after each datapoint collected.
         # when we only have very limited data, we don't make updates
 
-        num_update = 0 if self.frame <= self.delay_update_steps else self.utd_ratio
+        actor_loss_info = {}
+        num_update = 0 if self.frame < self.delay_update_steps - 1 else self.utd_ratio
         for i_update in range(num_update):
             self.update_num += 1
 
@@ -787,6 +699,13 @@ class REDQAgent():
                     self.alpha = self.log_alpha.cpu().exp().item()
                 else:
                     alpha_loss = Tensor([0])
+                
+                actor_loss_info = {'losses/a_loss': policy_loss.cpu(),
+                                   'losses/entropy': (-log_prob_a_tilda.mean()).cpu(),
+                                   'losses/alpha_loss': alpha_loss.cpu(),
+                                   'info/alpha': torch.ones(1) * self.alpha,
+                                   'info/actor_q': q_prediction.mean().detach().cpu(),
+                                   'info/target_entropy': torch.ones(1) * self.target_entropy,}
 
             """update networks"""
             for q_i in range(self.num_Q):
@@ -810,4 +729,4 @@ class REDQAgent():
         # if num_update == 0:
         #     logger.store(LossPi=0, LossQ1=0, LossAlpha=0, Q1Vals=0, Alpha=0, LogPi=0, PreTanh=0)
 
-        return {}, 0, 0 
+        return actor_loss_info, q_loss_all.cpu() / self.num_Q, 0 
