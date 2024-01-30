@@ -27,30 +27,17 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import numpy as np
-import os
-import torch
-import math
-
-from isaacgym import gymtorch
-from isaacgym import gymapi
-
-from isaacgymenvs.tasks.base.vec_task import VecTask
-import gymnasium
-from gymnasium.envs.mujoco import HopperEnv
-# from gymnasium.envs.mujoco import ReacherEnv as HopperEnv
-# from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
-# from stable_baselines3.common.monitor import Monitor
-from gymnasium.wrappers import TimeLimit, OrderEnforcing, PassiveEnvChecker
 
 
-class MujocoHopper:
+class Mujoco:
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         self.cfg = cfg
         self.max_episode_length = 1000
         # self.max_episode_length = 50 # Reacher
-        # self.env = TimeLimit(OrderEnforcing(PassiveEnvChecker(HopperEnv())), max_episode_steps=self.max_episode_length)
-        self.env = gymnasium.make('Hopper-v2')
+        import gymnasium
+        self.env = gymnasium.make(cfg['task_name'])
+        # self.env = gymnasium.make('Humanoid-v2')
         self.action_space = self.env.action_space
         self.observation_space = self.env.observation_space
         self.num_states = 0

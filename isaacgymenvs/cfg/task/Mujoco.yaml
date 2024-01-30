@@ -1,7 +1,8 @@
 # used to create the object
-name: MujocoHopper
+name: Mujoco
 
 physics_engine: ${..physics_engine}
+task_name: Humanoid-v2
 
 # if given, will override the device setting in gym. 
 env:
