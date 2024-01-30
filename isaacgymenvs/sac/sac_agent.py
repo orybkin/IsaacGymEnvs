@@ -373,7 +373,7 @@ class SACAgent(BaseAlgorithm):
     def preproc_obs(self, obs):
         if isinstance(obs, dict):
             obs = obs['obs']
-        obs = self.model.norm_obs(obs)
+        # obs = self.model.norm_obs(obs)
 
         return obs
 
@@ -421,12 +421,12 @@ class SACAgent(BaseAlgorithm):
 
     def env_step(self, actions):
         actions = self.preprocess_actions(actions)
-        obs, rewards, dones, infos = self.vec_env.step(actions) # (obs_space) -> (n, obs_space)
+        obs, rewards, terminated, truncated, infos = self.vec_env.step(actions) # (obs_space) -> (n, obs_space)
 
         if self.is_tensor_obses:
-            return self.obs_to_tensors(obs), rewards.to(self._device), dones.to(self._device), infos
+            return self.obs_to_tensors(obs), rewards.to(self._device), terminated.to(self._device), truncated.to(self._device), infos
         else:
-            return torch.from_numpy(obs).to(self._device), torch.from_numpy(rewards).to(self._device), torch.from_numpy(dones).to(self._device), infos
+            return torch.from_numpy(obs).to(self._device), torch.from_numpy(rewards).to(self._device), torch.from_numpy(terminated).to(self._device), torch.from_numpy(truncated).to(self._device), infos
 
     def env_reset(self):
         with torch.no_grad():
@@ -461,13 +461,10 @@ class SACAgent(BaseAlgorithm):
         critic1_losses = []
         critic2_losses = []
 
-        obs = self.obs
-        if isinstance(obs, dict):
-            obs = self.obs['obs']
-
-        next_obs_processed = obs.clone()
-
         for s in range(self.num_steps_per_episode):
+            obs = self.obs
+            if isinstance(obs, dict):
+                obs = obs['obs']
             self.set_eval()
             if random_exploration:
                 action = torch.rand((self.num_actors, *self.env_info["action_space"].shape), device=self._device) * 2.0 - 1.0
@@ -478,7 +475,10 @@ class SACAgent(BaseAlgorithm):
             step_start = time.time()
 
             with torch.no_grad():
-                next_obs, rewards, dones, infos = self.env_step(action)
+                next_obs, rewards, terminated, truncated, infos = self.env_step(action)
+
+            if isinstance(next_obs, dict):
+                next_obs = next_obs['obs']
             step_end = time.time()
 
             self.current_rewards += rewards
@@ -487,6 +487,7 @@ class SACAgent(BaseAlgorithm):
             total_time += (step_end - step_start)
             step_time += (step_end - step_start)
 
+            dones = terminated + truncated
             all_done_indices = dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
             self.game_rewards.update(self.current_rewards[done_indices])
@@ -502,18 +503,10 @@ class SACAgent(BaseAlgorithm):
             self.current_rewards = self.current_rewards * not_dones
             self.current_lengths = self.current_lengths * not_dones
 
-            if isinstance(next_obs, dict):    
-                next_obs_processed = next_obs['obs']
-                self.obs = next_obs.copy()
-            else:
-                self.obs = next_obs.clone()
+            self.obs = next_obs.clone()
+            # rewards = self.rewards_shaper(rewards)
 
-            rewards = self.rewards_shaper(rewards)
-
-            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs_processed, torch.unsqueeze(dones, 1))
-
-            if isinstance(obs, dict):
-                obs = self.obs['obs']
+            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1))
 
             if not random_exploration:
                 self.set_train()
@@ -530,6 +523,9 @@ class SACAgent(BaseAlgorithm):
                 update_time = 0
 
             total_update_time += update_time
+
+            if dones[0] and self.num_actors > 1:
+                self.obs = self.env_reset()
 
         total_time_end = time.time()
         total_time = total_time_end - total_time_start
@@ -657,10 +653,13 @@ class SACAgent(BaseAlgorithm):
         for n in range(self.vec_env.env.max_episode_length):
             with torch.no_grad():
                 action = self.act(obs.float(), self.env_info["action_space"].shape, sample=True)
-        
-            obs, rewards, dones, infos = self.env_step(action)
+
+            obs, rewards, terminated, truncated, infos = self.env_step(action)
+            if isinstance(obs, dict):
+                obs = obs['obs']
 
             # Save images
+            dones = terminated + truncated
             all_done_indices = dones.nonzero(as_tuple=False)[::self.num_agents]
             self.algo_observer.process_infos(infos, all_done_indices)
 
