@@ -64,6 +64,7 @@ class REDQAgent():
         self.replay_size = config["replay_buffer_size"]
         self.batch_size=config["batch_size"]
         self.utd_ratio=config.get("gradient_steps", 1)
+        policy_update_delay=config.get("policy_update_delay", 1)    
         self.relabel_ratio = config.get("relabel_ratio", 0.0)
         self.entropy_backup = config.get("entropy_backup", True)
         hidden_sizes=params['network']['mlp']['units']
@@ -78,7 +79,6 @@ class REDQAgent():
         # utd_ratio=20
         # num_Q=10
         num_min=2
-        policy_update_delay=20
         # set up networks
         self.policy_net = TanhGaussianPolicy(obs_dim, act_dim, hidden_sizes, action_limit=act_limit).to(device)
         self.q_net_list, self.q_target_net_list = [], []

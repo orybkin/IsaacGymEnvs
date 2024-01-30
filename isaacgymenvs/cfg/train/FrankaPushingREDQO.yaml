@@ -36,6 +36,7 @@ params:
     max_frames: 1_000_000_000
     num_steps_per_episode: 1
     gradient_steps: 1
+    policy_update_delay: 1
     save_best_after: 100
     save_frequency: 1000
     test_every_episodes: 10
