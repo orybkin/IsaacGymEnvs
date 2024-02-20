@@ -68,12 +68,13 @@ class REDQAgent():
         self.relabel_ratio = config.get("relabel_ratio", 0.0)
         self.entropy_backup = config.get("entropy_backup", True)
         hidden_sizes=params['network']['mlp']['units']
+        start_steps=self.num_actors * config["num_warmup_steps"]
         lr=config["actor_lr"]
+        alpha_lr=config["alpha_lr"]
         gamma=0.99
         polyak=0.995
         alpha=0.2
         auto_alpha=True
-        start_steps=5000
         delay_update_steps='auto'
         num_Q=2
         # utd_ratio=20
@@ -98,7 +99,7 @@ class REDQAgent():
         if auto_alpha:
             self.target_entropy = - act_dim
             self.log_alpha = torch.zeros(1, requires_grad=True, device=device)
-            self.alpha_optim = optim.Adam([self.log_alpha], lr=lr)
+            self.alpha_optim = optim.Adam([self.log_alpha], lr=alpha_lr)
             self.alpha = self.log_alpha.cpu().exp().item()
         else:
             self.alpha = alpha
@@ -465,7 +466,8 @@ class REDQAgent():
                 obs = self.env_reset()
                 if isinstance(obs, dict):
                     obs = obs['obs']
-                self.obs[dones.bool()] = obs[dones.bool()]
+                self.obs = obs
+                # self.obs[dones.bool()] = obs[dones.bool()]
 
         total_time_end = time.time()
         total_time = total_time_end - total_time_start
@@ -641,7 +643,6 @@ class REDQAgent():
             y_q = rews_tensor + self.gamma * (1 - done_tensor) * next_q_with_log_prob
         return y_q, sample_idxs
 
-
     def sample_data(self, batch_size):
         # sample data from replay buffer
         batch = self.replay_buffer.sample_batch(batch_size)
@@ -673,6 +674,10 @@ class REDQAgent():
                 self.q_optimizer_list[q_i].zero_grad()
             q_loss_all.backward()
 
+            """update networks"""
+            for q_i in range(self.num_Q):
+                self.q_optimizer_list[q_i].step()
+
             """policy and alpha loss"""
             if ((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1:
                 # get policy loss
@@ -683,7 +688,7 @@ class REDQAgent():
                     q_a_tilda = self.q_net_list[sample_idx](torch.cat([obs_tensor, a_tilda], 1))
                     q_a_tilda_list.append(q_a_tilda)
                 q_a_tilda_cat = torch.cat(q_a_tilda_list, 1)
-                ave_q = torch.mean(q_a_tilda_cat, dim=1, keepdim=True)
+                ave_q = torch.min(q_a_tilda_cat, dim=1, keepdim=True)[0]
                 policy_loss = (self.alpha * log_prob_a_tilda - ave_q).mean()
                 self.policy_optimizer.zero_grad()
                 policy_loss.backward()
@@ -692,7 +697,7 @@ class REDQAgent():
 
                 # get alpha loss
                 if self.auto_alpha:
-                    alpha_loss = -(self.log_alpha * (log_prob_a_tilda + self.target_entropy).detach()).mean()
+                    alpha_loss = -(self.log_alpha.exp() * (log_prob_a_tilda + self.target_entropy).detach()).mean()
                     self.alpha_optim.zero_grad()
                     alpha_loss.backward()
                     self.alpha_optim.step()
@@ -706,10 +711,6 @@ class REDQAgent():
                                    'info/alpha': torch.ones(1) * self.alpha,
                                    'info/actor_q': q_prediction.mean().detach().cpu(),
                                    'info/target_entropy': torch.ones(1) * self.target_entropy,}
-
-            """update networks"""
-            for q_i in range(self.num_Q):
-                self.q_optimizer_list[q_i].step()
 
             if ((i_update + 1) % self.policy_update_delay == 0) or i_update == num_update - 1:
                 self.policy_optimizer.step()

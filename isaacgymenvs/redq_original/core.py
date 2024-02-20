@@ -5,7 +5,7 @@ from torch.nn import functional as F
 from torch.distributions import Distribution, Normal
 # following SAC authors' and OpenAI implementation
 LOG_SIG_MAX = 2
-LOG_SIG_MIN = -20
+LOG_SIG_MIN = -5
 ACTION_BOUND_EPSILON = 1E-6
 # these numbers are from the MBPO paper
 mbpo_target_entropy_dict = {'Reacher-v2':-1,
@@ -20,7 +20,8 @@ mbpo_epoches = {'Reacher-v2':100,
 def weights_init_(m):
     # weight init helper function
     if isinstance(m, nn.Linear):
-        torch.nn.init.xavier_uniform_(m.weight, gain=1)
+        # torch.nn.init.xavier_uniform_(m.weight)
+        torch.nn.init.orthogonal_(m.weight)
         torch.nn.init.constant_(m.bias, 0)
 
 class ReplayBuffer:
@@ -90,6 +91,7 @@ class Mlp(nn.Module):
         ## here we use ModuleList so that the layers in it can be
         ## detected by .parameters() call
         self.hidden_layers = nn.ModuleList()
+        self.norms = nn.ModuleList()
         in_size = input_size
 
         ## initialize each hidden layer
@@ -97,6 +99,7 @@ class Mlp(nn.Module):
             fc_layer = nn.Linear(in_size, next_size)
             in_size = next_size
             self.hidden_layers.append(fc_layer)
+            self.norms.append(nn.LayerNorm(next_size))
 
         ## init last fully connected layer with small weight and bias
         self.last_fc_layer = nn.Linear(in_size, output_size)
@@ -106,74 +109,10 @@ class Mlp(nn.Module):
         h = input
         for i, fc_layer in enumerate(self.hidden_layers):
             h = fc_layer(h)
+            h = self.norms[i](h)
             h = self.hidden_activation(h)
         output = self.last_fc_layer(h)
         return output
-
-class TanhNormal(Distribution):
-    """
-    Represent distribution of X where
-        X ~ tanh(Z)
-        Z ~ N(mean, std)
-    Note: this is not very numerically stable.
-    """
-    def __init__(self, normal_mean, normal_std, epsilon=1e-6):
-        """
-        :param normal_mean: Mean of the normal distribution
-        :param normal_std: Std of the normal distribution
-        :param epsilon: Numerical stability epsilon when computing log-prob.
-        """
-        self.normal_mean = normal_mean
-        self.normal_std = normal_std
-        self.normal = Normal(normal_mean, normal_std)
-        self.epsilon = epsilon
-
-    def log_prob(self, value, pre_tanh_value=None):
-        """
-        return the log probability of a value
-        :param value: some value, x
-        :param pre_tanh_value: arctanh(x)
-        :return:
-        """
-        # use arctanh formula to compute arctanh(value)
-        if pre_tanh_value is None:
-            pre_tanh_value = torch.log(
-                (1+value) / (1-value)
-            ) / 2
-        return self.normal.log_prob(pre_tanh_value) - \
-               torch.log(1 - value * value + self.epsilon)
-
-    def sample(self, return_pretanh_value=False):
-        """
-        Gradients will and should *not* pass through this operation.
-        See https://github.com/pytorch/pytorch/issues/4620 for discussion.
-        """
-        z = self.normal.sample().detach()
-
-        if return_pretanh_value:
-            return torch.tanh(z), z
-        else:
-            return torch.tanh(z)
-
-    def rsample(self, return_pretanh_value=False):
-        """
-        Sampling in the reparameterization case.
-        Implement: tanh(mu + sigma * eksee)
-        with eksee~N(0,1)
-        z here is mu+sigma+eksee
-        """
-        z = (
-            self.normal_mean +
-            self.normal_std *
-            Normal( ## this part is eksee~N(0,1)
-                torch.zeros(self.normal_mean.size()),
-                torch.ones(self.normal_std.size())
-            ).sample()
-        )
-        if return_pretanh_value:
-            return torch.tanh(z), z
-        else:
-            return torch.tanh(z)
 
 class TanhGaussianPolicy(Mlp):
     """
@@ -215,8 +154,10 @@ class TanhGaussianPolicy(Mlp):
         :param return_log_prob: If True, return a sample and its log probability
         """
         h = obs
-        for fc_layer in self.hidden_layers:
-            h = self.hidden_activation(fc_layer(h))
+        for i, fc_layer in enumerate(self.hidden_layers):
+            h = fc_layer(h)
+            h = self.norms[i](h)
+            h = self.hidden_activation(h)
         mean = self.last_fc_layer(h)
 
         log_std = self.last_fc_log_std(h)
