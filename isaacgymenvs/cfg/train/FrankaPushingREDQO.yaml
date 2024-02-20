@@ -44,8 +44,8 @@ params:
     entropy_backup: True
     gamma: 0.99
     init_alpha: 1.0
-    alpha_lr: 0.005
-    actor_lr: 0.0005
+    alpha_lr: 0.0003
+    actor_lr: 0.0003
     critic_lr: 0.0005
     critic_tau: 0.005
     batch_size: 256

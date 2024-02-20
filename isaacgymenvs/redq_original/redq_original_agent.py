@@ -68,7 +68,7 @@ class REDQAgent():
         self.relabel_ratio = config.get("relabel_ratio", 0.0)
         self.entropy_backup = config.get("entropy_backup", True)
         hidden_sizes=params['network']['mlp']['units']
-        lr=3e-4
+        lr=config["actor_lr"]
         gamma=0.99
         polyak=0.995
         alpha=0.2
