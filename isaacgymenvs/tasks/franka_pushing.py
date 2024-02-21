@@ -725,7 +725,7 @@ class FrankaPushing(VecTask):
         tolerance = 0.01; tasks.append([center, [.07 + tolerance, -.11, height], [-.07 - tolerance, -.11, height], off, off, off, [.0, -.11, 0]]) # tolerance
 
         if self.test:
-            for t in range(len(tasks)):
+            for t in range(min(len(tasks), sampled_cube_state.shape[0])):
                 for i in range(3):
                     sampled_cube_state[t, i] = table_center[i] + tasks[t][cube][i]
 
@@ -777,7 +777,7 @@ class FrankaPushing(VecTask):
             sampled_goal_state[:, 0] = center[0] + 0.11
             sampled_goal_state[:, 1] = center[1] - 0.11
             sampled_goal_state[:, 2] = center[2] 
-            for t in range(len(self.tasks)):
+            for t in range(min(len(self.tasks), sampled_goal_state.shape[0])):
                 if len(self.tasks[t]) > self.n_cubes:
                     for i in range(3):
                         sampled_goal_state[t, i] = center[i] + self.tasks[t][self.n_cubes][i]
@@ -879,7 +879,7 @@ class FrankaPushing(VecTask):
         metrics["success@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02
         metrics["failure@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) > 0.02
         if self.test:
-            for i in range(self.max_pix):
+            for i in range(min(self.max_pix, self.states['goal_pos'].shape[0])):
                 metrics[f"goal_dist_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i]
                 metrics[f"success@4_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.04
                 metrics[f"success@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.02
