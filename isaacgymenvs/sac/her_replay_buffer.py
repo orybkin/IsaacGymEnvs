@@ -16,7 +16,7 @@ class HERReplayBuffer(experience.VectorizedReplayBuffer):
     Replay buffer for sampling HER (Hindsight Experience Replay) transitions.
 
     """
-    def __init__(self, obs_shape, action_shape, capacity, n_envs, device, env, her_ratio=0.8):
+    def __init__(self, obs_shape, action_shape, capacity, n_envs, device, env, rewards_shaper=None, her_ratio=0.8):
         """Create Vectorized Replay buffer.
         Parameters
         ----------
@@ -48,6 +48,7 @@ class HERReplayBuffer(experience.VectorizedReplayBuffer):
         self.full = False
         self.her_ratio = her_ratio
         self.env = env
+        self.rewards_shaper = rewards_shaper
 
     def add(self, obs, action, reward, next_obs, done):
         steps_to_go = 1 - done
@@ -109,6 +110,7 @@ class HERReplayBuffer(experience.VectorizedReplayBuffer):
         obs[:, 7:10] = goal
         next_obs[:, 7:10] = goal
         reward = self.env.compute_franka_reward({'goal_pos': goal, self.env.target_name: target_pos})[:, None]
+        reward = self.rewards_shaper(reward)
 
         return obs, action, reward, next_obs, done
     

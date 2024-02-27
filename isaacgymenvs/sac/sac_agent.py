@@ -94,6 +94,7 @@ class SACAgent(BaseAlgorithm):
                                                             self.num_actors,
                                                             self._device,
                                                             self.vec_env.env,
+                                                            self.rewards_shaper,
                                                             self.relabel_ratio)
         else:
             self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
@@ -515,7 +516,7 @@ class SACAgent(BaseAlgorithm):
             self.current_lengths = self.current_lengths * not_dones
 
             self.obs = next_obs.clone()
-            # rewards = self.rewards_shaper(rewards)
+            rewards = self.rewards_shaper(rewards)
 
             self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1))
 
