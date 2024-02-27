@@ -127,6 +127,7 @@ class Cartpole(VecTask):
             pole_angle, pole_vel, cart_vel, cart_pos,
             self.reset_dist, self.reset_buf, self.progress_buf, self.max_episode_length
         )
+        self.done = self.reset_buf.clone()
 
     def compute_observations(self, env_ids=None):
         if env_ids is None:

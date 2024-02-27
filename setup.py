@@ -23,9 +23,8 @@ INSTALL_REQUIRES = [
     "rl-games>=1.6.0",
     "pyvirtualdisplay",
     "moviepy",
-    "gymnasium==3.3.0",
+    # "gymnasium==3.3.0",
     ]
-
 
 
 # Installation operation
@@ -39,7 +38,7 @@ setup(
     python_requires=">=3.6",
     install_requires=INSTALL_REQUIRES,
     packages=find_packages("."),
-    classifiers=["Natural Language :: English", "Programming Language :: Python :: 3.6, 3.7, 3.8"],
+    classifiers=["Natural Language :: English", "Programming Language :: Python :: 3.6, 3.7, 3.8, 3.9"],
     zip_safe=False,
 )
 

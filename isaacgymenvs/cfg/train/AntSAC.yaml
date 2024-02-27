@@ -33,7 +33,7 @@ params:
     reward_shaper:
       scale_value: 1.0
     max_frames: 1_000_000_000
-    num_steps_per_episode: 8
+    num_steps_per_episode: 1
     gradient_steps: 1
     target_entropy_coef: 1.0
     save_best_after: 100
