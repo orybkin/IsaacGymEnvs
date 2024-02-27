@@ -60,6 +60,7 @@ class SACAgent(BaseAlgorithm):
             float(self.env_info['action_space'].low.min()),
             float(self.env_info['action_space'].high.max())
         ]
+        self.action_scale = (action_space.high[0].item() - action_space.low[0].item())/2
 
         obs_shape = torch_ext.shape_whc_to_cwh(self.obs_shape)
         net_config = {
@@ -289,8 +290,10 @@ class SACAgent(BaseAlgorithm):
             next_action = dist.rsample()
             log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
 
+            next_action = next_action * self.action_scale
             target_Q1, target_Q2 = self.model.critic_target(next_obs, next_action)
-            target_V = torch.min(target_Q1, target_Q2) #- self.alpha * log_prob
+            target_V = torch.min(target_Q1, target_Q2) 
+            # target_V = torch.min(target_Q1, target_Q2) - self.alpha * log_prob
 
             target_Q = reward + (not_done * self.gamma * target_V)
             target_Q = target_Q.detach()
@@ -315,7 +318,9 @@ class SACAgent(BaseAlgorithm):
         action = dist.rsample()
         log_prob = dist.log_prob(action).sum(-1, keepdim=True)
         entropy = -log_prob.mean() #dist.entropy().sum(-1, keepdim=True).mean()
+        action = action * self.action_scale
         actor_Q1, actor_Q2 = self.model.critic(obs, action)
+        # actor_Q = (actor_Q1 + actor_Q2) / 2
         actor_Q = torch.min(actor_Q1, actor_Q2)
 
         actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
@@ -329,8 +334,8 @@ class SACAgent(BaseAlgorithm):
             p.requires_grad = True
 
         if self.learnable_temperature:
-            alpha_loss = (self.alpha *
-                          (-log_prob - self.target_entropy).detach()).mean()
+            # alpha_loss = (self.log_alpha * (-log_prob - self.target_entropy).detach()).mean()
+            alpha_loss = (self.alpha * (-log_prob - self.target_entropy).detach()).mean()
             self.log_alpha_optimizer.zero_grad(set_to_none=True)
             alpha_loss.backward()
             self.log_alpha_optimizer.step()
@@ -365,6 +370,9 @@ class SACAgent(BaseAlgorithm):
         next_obs = self.preproc_obs(next_obs)
         critic_loss, critic1_loss, critic2_loss = self.update_critic(obs, action, reward, next_obs, not_done, step)
         actor_loss_info = self.update_actor_and_alpha(obs, step)
+
+        # self.critic_optimizer.step()
+        # self.actor_optimizer.step()
 
         self.soft_update_params(self.model.sac_network.critic, self.model.sac_network.critic_target,
                                      self.critic_tau)
@@ -426,7 +434,7 @@ class SACAgent(BaseAlgorithm):
         if self.is_tensor_obses:
             return self.obs_to_tensors(obs), rewards.to(self._device), terminated.to(self._device), truncated.to(self._device), infos
         else:
-            return torch.from_numpy(obs).to(self._device), torch.from_numpy(rewards).to(self._device), torch.from_numpy(terminated).to(self._device), torch.from_numpy(truncated).to(self._device), infos
+            return torch.from_numpy(obs).to(self._device).float(), torch.from_numpy(rewards).to(self._device), torch.from_numpy(terminated).to(self._device), torch.from_numpy(truncated).to(self._device), infos
 
     def env_reset(self):
         with torch.no_grad():
@@ -441,6 +449,7 @@ class SACAgent(BaseAlgorithm):
         dist = self.model.actor(obs)
 
         actions = dist.sample() if sample else dist.mean
+        actions = actions * self.action_scale
         actions = actions.clamp(*self.action_range)
         assert actions.ndim == 2
 
@@ -491,6 +500,8 @@ class SACAgent(BaseAlgorithm):
             all_done_indices = dones.nonzero(as_tuple=False)
             done_indices = all_done_indices[::self.num_agents]
             self.game_rewards.update(self.current_rewards[done_indices])
+            # if done_indices.numel() > 0:
+            #     print(self.current_lengths[done_indices].mean())
             self.game_lengths.update(self.current_lengths[done_indices])
 
             not_dones = 1.0 - dones.float()
@@ -524,8 +535,11 @@ class SACAgent(BaseAlgorithm):
 
             total_update_time += update_time
 
-            if dones[0] and self.num_actors > 1:
-                self.obs = self.env_reset()
+            if dones.any():
+                obs = self.env_reset()
+                if isinstance(obs, dict):
+                    obs = obs['obs']
+                self.obs[dones.bool()] = obs[dones.bool()]
 
         total_time_end = time.time()
         total_time = total_time_end - total_time_start
@@ -560,14 +574,15 @@ class SACAgent(BaseAlgorithm):
             fps_step_inference = curr_frames / play_time
             fps_total = curr_frames / epoch_total_time
 
-            self.writer.add_scalar('performance/step_inference_rl_update_fps', fps_total, self.frame)
-            self.writer.add_scalar('performance/step_inference_fps', fps_step_inference, self.frame)
-            self.writer.add_scalar('performance/step_fps', fps_step, self.frame)
-            self.writer.add_scalar('performance/rl_update_time', update_time, self.frame)
-            self.writer.add_scalar('performance/step_inference_time', play_time, self.frame)
-            self.writer.add_scalar('performance/step_time', step_time, self.frame)
             
-            if self.epoch_num % 100 == 0:
+            if self.epoch_num % 1000 == 0:
+                self.writer.add_scalar('performance/step_inference_rl_update_fps', fps_total, self.frame)
+                self.writer.add_scalar('performance/step_inference_fps', fps_step_inference, self.frame)
+                self.writer.add_scalar('performance/step_fps', fps_step, self.frame)
+                self.writer.add_scalar('performance/rl_update_time', update_time, self.frame)
+                self.writer.add_scalar('performance/step_inference_time', play_time, self.frame)
+                self.writer.add_scalar('performance/step_time', step_time, self.frame)
+
                 print_statistics(self.print_stats, curr_frames, step_time, play_time, epoch_total_time, 
                     self.epoch_num, self.max_epochs, self.frame, self.max_frames, self.game_rewards.get_mean())
             

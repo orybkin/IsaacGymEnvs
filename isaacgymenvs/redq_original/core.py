@@ -23,6 +23,19 @@ def weights_init_(m):
         torch.nn.init.xavier_uniform_(m.weight, gain=1)
         torch.nn.init.constant_(m.bias, 0)
 
+
+def get_probabilistic_num_min(num_mins):
+    # allows the number of min to be a float
+    floored_num_mins = np.floor(num_mins)
+    if num_mins - floored_num_mins > 0.001:
+        prob_for_higher_value = num_mins - floored_num_mins
+        if np.random.uniform(0, 1) < prob_for_higher_value:
+            return int(floored_num_mins+1)
+        else:
+            return int(floored_num_mins)
+    else:
+        return num_mins
+
 class ReplayBuffer:
     """
     A simple FIFO experience replay buffer

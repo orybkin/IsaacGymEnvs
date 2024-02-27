@@ -828,6 +828,7 @@ class DiagGaussianActor(NetworkBuilder.BaseNetwork):
 
         self.log_std_bounds = log_std_bounds
 
+        # mlp_args['norm_func_name'] = None
         self.trunk = self._build_mlp(**mlp_args)
         self.trunk = nn.Sequential(*list(self.trunk.children()), nn.Linear(mlp_args['units'][-1], output_dim))
 
