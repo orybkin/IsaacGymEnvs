@@ -30,7 +30,6 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
         losses_dict = {}
         diagnostics = {}
         for i, input_dict in enumerate([original_dict, relabeled_dict]):
-            # if i == 0: continue
             value_preds_batch = input_dict['old_values']
             old_action_log_probs_batch = input_dict['old_logp_actions']
             advantage = input_dict['advantages']
@@ -99,8 +98,6 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 f'clipped_fraction{identifier}': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach(),
                 f'clipped_value_fraction{identifier}': clip_value_frac,
             })
-
-            # print(f'values train {identifier}: {values.mean().item():.3f}')
 
         self.scaler.scale(loss[0] + loss[1]).backward()
         #TODO: Refactor this ugliest code of the year
