@@ -5,6 +5,7 @@ from rl_games.common import schedulers
 from rl_games.common import experience
 from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
+from isaacgymenvs.ppo.torch_ext import explained_variance
 from isaacgymenvs.sac import her_replay_buffer
 from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm
 
@@ -318,7 +319,8 @@ class SACAgent(BaseAlgorithm):
         info = {'losses/c_loss': critic_loss.detach(),
                 'losses/c1_loss': critic1_loss.detach(),
                 'losses/c2_loss': critic2_loss.detach(),
-                'info/grad_norm': grad_norm.detach(),}
+                'info/grad_norm': grad_norm.detach(),
+                'info/c_explained_variance': explained_variance(current_Q1, target_Q),}
         
         if self.relabel_ratio > 0:
             bs = current_Q1.shape[0]
