@@ -6,7 +6,7 @@ from rl_games.common import experience
 from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
 from isaacgymenvs.sac import her_replay_buffer
-from isaacgymenvs.utils.rlgames_utils import Every
+from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm
 
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from torch.utils.tensorboard import SummaryWriter
@@ -40,6 +40,8 @@ class SACAgent(BaseAlgorithm):
         self.replay_buffer_size = config["replay_buffer_size"]
         self.num_steps_per_episode = config.get("num_steps_per_episode", 1)
         self.gradient_steps = config.get("gradient_steps", 1)
+        self.grad_norm = self.config.get('grad_norm', None)
+        if self.grad_norm == 'None': self.grad_norm = None
         self.normalize_input = config.get("normalize_input", False)
         self.relabel_ratio = config.get("relabel_ratio", 0.0)
         self.test_every_episodes = config.get('test_every_episodes', 10)        
@@ -307,9 +309,18 @@ class SACAgent(BaseAlgorithm):
         critic_loss = critic1_loss + critic2_loss 
         self.critic_optimizer.zero_grad(set_to_none=True)
         critic_loss.backward()
+        if self.grad_norm is not None:
+            grad_norm = nn.utils.clip_grad_norm_(self.model.sac_network.critic.parameters(), self.grad_norm)
+        else:
+            grad_norm = get_grad_norm(self.model.sac_network.critic.parameters())
         self.critic_optimizer.step()
 
-        return critic_loss.detach(), critic1_loss.detach(), critic2_loss.detach()
+        info = {'losses/c_loss': critic_loss.detach(),
+                'losses/c1_loss': critic1_loss.detach(),
+                'losses/c2_loss': critic2_loss.detach(),
+                'info/grad_norm': grad_norm.detach(),}
+        
+        return critic_loss.detach(), info
 
     def update_actor_and_alpha(self, obs, step):
         for p in self.model.sac_network.critic.parameters():
@@ -343,7 +354,7 @@ class SACAgent(BaseAlgorithm):
         else:
             alpha_loss = None
 
-        out = {'losses/a_loss': actor_loss.detach(), 
+        info = {'losses/a_loss': actor_loss.detach(), 
                'losses/entropy': entropy.detach(),
                'losses/alpha_loss': alpha_loss, # TODO: maybe not self.alpha'
                'info/alpha': self.alpha.detach(),
@@ -353,10 +364,10 @@ class SACAgent(BaseAlgorithm):
         if self.relabel_ratio > 0:
             bs = actor_Q.shape[0]
             real = int(bs * (1 - self.relabel_ratio))
-            out['info/actor_q'] = actor_Q[:real].mean().detach()
-            out['info/actor_q_relabeled'] = actor_Q[real:].mean().detach()
+            info['info/actor_q'] = actor_Q[:real].mean().detach()
+            info['info/actor_q_relabeled'] = actor_Q[real:].mean().detach()
 
-        return out
+        return info
 
     def soft_update_params(self, net, target_net, tau):
         for param, target_param in zip(net.parameters(), target_net.parameters()):
@@ -369,7 +380,7 @@ class SACAgent(BaseAlgorithm):
 
         obs = self.preproc_obs(obs)
         next_obs = self.preproc_obs(next_obs)
-        critic_loss, critic1_loss, critic2_loss = self.update_critic(obs, action, reward, next_obs, not_done, step)
+        critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, not_done, step)
         actor_loss_info = self.update_actor_and_alpha(obs, step)
 
         # self.critic_optimizer.step()
@@ -377,7 +388,7 @@ class SACAgent(BaseAlgorithm):
 
         self.soft_update_params(self.model.sac_network.critic, self.model.sac_network.critic_target,
                                      self.critic_tau)
-        return actor_loss_info, critic1_loss, critic2_loss
+        return actor_loss_info, critic_loss_info
 
     def preproc_obs(self, obs):
         if isinstance(obs, dict):
@@ -468,8 +479,7 @@ class SACAgent(BaseAlgorithm):
         total_time = 0
         step_time = 0.0
         actor_metrics = defaultdict(list)
-        critic1_losses = []
-        critic2_losses = []
+        critic_metrics = defaultdict(list)
 
         for s in range(self.num_steps_per_episode):
             obs = self.obs
@@ -524,10 +534,9 @@ class SACAgent(BaseAlgorithm):
                 self.set_train()
                 update_time_start = time.time()
                 for _ in range(self.gradient_steps):
-                    actor_loss_info, critic1_loss, critic2_loss = self.update(self.epoch_num)
+                    actor_loss_info, critic_loss_info = self.update(self.epoch_num)
                     for key, value in actor_loss_info.items(): actor_metrics[key].append(value)
-                    critic1_losses.append(critic1_loss)
-                    critic2_losses.append(critic2_loss)
+                    for key, value in critic_loss_info.items(): critic_metrics[key].append(value)
                     self.update_num += 1
                 update_time_end = time.time()
                 update_time = update_time_end - update_time_start
@@ -546,7 +555,7 @@ class SACAgent(BaseAlgorithm):
         total_time = total_time_end - total_time_start
         play_time = total_time - total_update_time
 
-        return step_time, play_time, total_update_time, total_time, actor_metrics, critic1_losses, critic2_losses
+        return step_time, play_time, total_update_time, total_time, actor_metrics, critic_metrics
 
     def train_epoch(self):
         random_exploration = self.epoch_num < self.num_warmup_steps
@@ -564,7 +573,7 @@ class SACAgent(BaseAlgorithm):
 
         while True:
             self.epoch_num += 1
-            step_time, play_time, update_time, epoch_total_time, actor_metrics, critic1_losses, critic2_losses = self.train_epoch()
+            step_time, play_time, update_time, epoch_total_time, actor_metrics, critic_metrics = self.train_epoch()
 
             total_time += epoch_total_time
 
@@ -574,7 +583,6 @@ class SACAgent(BaseAlgorithm):
             fps_step = curr_frames / step_time
             fps_step_inference = curr_frames / play_time
             fps_total = curr_frames / epoch_total_time
-
             
             if self.epoch_num % 1000 == 0:
                 self.writer.add_scalar('performance/step_inference_rl_update_fps', fps_total, self.frame)
@@ -588,8 +596,9 @@ class SACAgent(BaseAlgorithm):
                     self.epoch_num, self.max_epochs, self.frame, self.max_frames, self.game_rewards.get_mean())
             
                 if self.epoch_num >= self.num_warmup_steps:
-                    self.writer.add_scalar('losses/c1_loss', torch_ext.mean_list(critic1_losses).item(), self.frame)
-                    self.writer.add_scalar('losses/c2_loss', torch_ext.mean_list(critic2_losses).item(), self.frame)
+                    for key, value in critic_metrics.items():
+                        if value[0] is not None:
+                            self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
                     for key, value in actor_metrics.items():
                         if value[0] is not None:
                             self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
