@@ -320,6 +320,12 @@ class SACAgent(BaseAlgorithm):
                 'losses/c2_loss': critic2_loss.detach(),
                 'info/grad_norm': grad_norm.detach(),}
         
+        if self.relabel_ratio > 0:
+            bs = current_Q1.shape[0]
+            real = int(bs * (1 - self.relabel_ratio))
+            info['losses/c_loss_original'] = nn.MSELoss()(current_Q1[:real], target_Q[:real]).detach()
+            info['losses/c_loss_relabeled'] = nn.MSELoss()(current_Q1[real:], target_Q[real:]).detach()
+
         return critic_loss.detach(), info
 
     def update_actor_and_alpha(self, obs, step):
