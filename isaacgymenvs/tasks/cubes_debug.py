@@ -52,7 +52,10 @@ class CubesDebug:
         sim_params.physx.num_threads = 0
         sim_params.physx.use_gpu = True
         sim_params.use_gpu_pipeline = True
-        sim_params.gravity = gymapi.Vec3(0.0, 0.0, -9.81)
+        sim_params.up_axis = gymapi.UP_AXIS_Z
+        sim_params.gravity.x = 0
+        sim_params.gravity.y = 0
+        sim_params.gravity.z = -9.81        
         self.sim = self.gym.create_sim(0, 0, gymapi.SIM_PHYSX, sim_params)
 
         self._create_ground_plane()
@@ -146,6 +149,8 @@ class CubesDebug:
             # Write these new init states to the sim states
             self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
         
+        self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self._root_state))
+        
 
     def _reset_init_cube_state(self, cube, env_ids, check_valid=True):
         """
@@ -223,8 +228,6 @@ class CubesDebug:
             sampled_cube_state[:, 3:7] = quat_mul(axisangle2quat(aa_rot), sampled_cube_state[:, 3:7])
         
         this_cube_state_all[env_ids, :] = sampled_cube_state
-
-        breakpoint()
 
     
     def refresh(self):

@@ -23,7 +23,7 @@ env = CubesDebug(1)
 env.reset_idx()
 env.refresh()
 
-breakpoint()
+# breakpoint()
 
 env.render("render_og1.png")
 og1_states = env.states['cube0_pos'].cpu().numpy()
