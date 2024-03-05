@@ -477,6 +477,8 @@ class Every:
         self.last_true = 0
 
     def check(self, i):
+        if self.every is None:
+            return False
         if (i - self.last_true) >= self.every:
             self.last_true = i
             return True

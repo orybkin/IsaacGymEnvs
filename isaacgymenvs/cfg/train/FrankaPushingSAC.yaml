@@ -47,6 +47,7 @@ params:
     critic_lr: 0.0005
     critic_tau: 0.005
     grad_norm: None
+    reset_every_steps: None
     batch_size: 4096
     relabel_ratio: 0.0
     learnable_temperature: true

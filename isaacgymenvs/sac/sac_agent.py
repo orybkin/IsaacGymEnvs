@@ -21,6 +21,7 @@ import time
 import os
 from collections import defaultdict
 
+check_for_none = lambda x: None if x == 'None' else x
 
 class SACAgent(BaseAlgorithm):
 
@@ -41,11 +42,11 @@ class SACAgent(BaseAlgorithm):
         self.replay_buffer_size = config["replay_buffer_size"]
         self.num_steps_per_episode = config.get("num_steps_per_episode", 1)
         self.gradient_steps = config.get("gradient_steps", 1)
-        self.grad_norm = self.config.get('grad_norm', None)
-        if self.grad_norm == 'None': self.grad_norm = None
+        self.grad_norm = check_for_none(self.config.get('grad_norm', None))
         self.normalize_input = config.get("normalize_input", False)
         self.relabel_ratio = config.get("relabel_ratio", 0.0)
-        self.test_every_episodes = config.get('test_every_episodes', 10)        
+        self.test_every_episodes = config.get('test_every_episodes', 10) 
+        self.reset_every_steps = check_for_none(config.get('reset_every_steps', None))
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -65,30 +66,8 @@ class SACAgent(BaseAlgorithm):
         ]
         self.action_scale = (action_space.high[0].item() - action_space.low[0].item())/2
 
-        obs_shape = torch_ext.shape_whc_to_cwh(self.obs_shape)
-        net_config = {
-            'obs_dim': self.env_info["observation_space"].shape[0],
-            'action_dim': self.env_info["action_space"].shape[0],
-            'actions_num' : self.actions_num,
-            'input_shape' : obs_shape,
-            'normalize_input': self.normalize_input,
-        }
-        self.model = self.network.build(net_config)
-        self.model.to(self._device)
-
         print("Number of Agents", self.num_actors, "Batch Size", self.batch_size)
-
-        self.actor_optimizer = torch.optim.Adam(self.model.sac_network.actor.parameters(),
-                                                lr=float(self.config['actor_lr']),
-                                                betas=self.config.get("actor_betas", [0.9, 0.999]))
-
-        self.critic_optimizer = torch.optim.Adam(self.model.sac_network.critic.parameters(),
-                                                 lr=float(self.config["critic_lr"]),
-                                                 betas=self.config.get("critic_betas", [0.9, 0.999]))
-
-        self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha],
-                                                    lr=float(self.config["alpha_lr"]),
-                                                    betas=self.config.get("alphas_betas", [0.9, 0.999]))
+        self.build_network()
 
         if self.relabel_ratio > 0.0:
             self.replay_buffer = her_replay_buffer.HERReplayBuffer(self.env_info['observation_space'].shape,
@@ -108,6 +87,31 @@ class SACAgent(BaseAlgorithm):
         self.target_entropy_coef = config.get("target_entropy_coef", 1.0)
         self.target_entropy = self.target_entropy_coef * -self.env_info['action_space'].shape[0]
         print("Target entropy", self.target_entropy)
+
+    def build_network(self):
+        obs_shape = torch_ext.shape_whc_to_cwh(self.obs_shape)
+        net_config = {
+            'obs_dim': self.env_info["observation_space"].shape[0],
+            'action_dim': self.env_info["action_space"].shape[0],
+            'actions_num' : self.actions_num,
+            'input_shape' : obs_shape,
+            'normalize_input': self.normalize_input,
+        }
+    
+        self.model = self.network.build(net_config)
+        self.model.to(self._device)
+
+        self.actor_optimizer = torch.optim.Adam(self.model.sac_network.actor.parameters(),
+                                                lr=float(self.config['actor_lr']),
+                                                betas=self.config.get("actor_betas", [0.9, 0.999]))
+
+        self.critic_optimizer = torch.optim.Adam(self.model.sac_network.critic.parameters(),
+                                                 lr=float(self.config["critic_lr"]),
+                                                 betas=self.config.get("critic_betas", [0.9, 0.999]))
+
+        self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha],
+                                                    lr=float(self.config["alpha_lr"]),
+                                                    betas=self.config.get("alphas_betas", [0.9, 0.999]))
 
     def load_networks(self, params):
         builder = model_builder.ModelBuilder()
@@ -574,12 +578,16 @@ class SACAgent(BaseAlgorithm):
         self.algo_observer.after_init(self)
         test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
         render_check = Every(self.vec_env.env.render_every_episodes * self.vec_env.env.max_episode_length)
+        reset_check = Every(self.reset_every_steps)
         total_time = 0
         # rep_count = 0
 
         self.obs = self.env_reset()
 
         while True:
+            if reset_check.check(self.frame):
+                print('Reset network!')
+                self.build_network()
             self.epoch_num += 1
             step_time, play_time, update_time, epoch_total_time, actor_metrics, critic_metrics = self.train_epoch()
 
