@@ -71,14 +71,17 @@ cube_mass = None
 gym.prepare_sim(sim)
 
 actor_root_state_tensor = gym.acquire_actor_root_state_tensor(sim)
+rigid_body_state_tensor = gym.acquire_rigid_body_state_tensor(sim)
 root_state = gymtorch.wrap_tensor(actor_root_state_tensor).view(1, -1, 13)
+rigid_body_state = gymtorch.wrap_tensor(rigid_body_state_tensor).view(1, -1, 13)
 images = []
 
 def reset():
     loc = torch.rand(1, 3, device=device)
-    root_state[0, :, :2] = 2 * (loc[:, :2] - 0.5)
-    root_state[0, :, 2] = loc[:, 2]
+    root_state[0, :, :2] = rigid_body_state[0, :, :2] = 2 * (loc[:, :2] - 0.5)
+    root_state[0, :, 2] = rigid_body_state[0, :, 2] = loc[:, 2] + 0.5 # force z coordinate to be large
     gym.set_actor_root_state_tensor(sim, gymtorch.unwrap_tensor(root_state))
+    gym.set_rigid_body_state_tensor(sim, gymtorch.unwrap_tensor(rigid_body_state))
 
 def refresh():
     gym.refresh_actor_root_state_tensor(sim)
@@ -105,25 +108,30 @@ def render():
     
     gym.end_access_image_tensors(sim)
 
+def print_info():
+    print('root:  ', root_state[0][:,:3])
+    print('rigid: ', rigid_body_state[0][:,:3])
 
-print(root_state[0][:,:3])
+print_info()
 reset()
-print(root_state[0][:,:3])
+print_info()
 refresh()
-print(root_state[0][:,:3])
-for i in range(10):
+print_info()
+for i in range(5):
     step()
     render()
-    print(root_state[0][:,:3])
+    print('root:  ', root_state[0][:,:3])
+    print('rigid: ', rigid_body_state[0][:,:3])
 
 gym.set_rigid_body_color(env, cube_id, 0, gymapi.MESH_VISUAL, new_color)
 reset()
 refresh()
-print(root_state[0][:,:3])
-for i in range(10):
+print_info()
+for i in range(5):
     step()
     render()
-    print(root_state[0][:,:3])
+    print('root:  ', root_state[0][:,:3])
+    print('rigid: ', rigid_body_state[0][:,:3])
     
 # breakpoint()
     
