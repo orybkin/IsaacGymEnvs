@@ -196,6 +196,7 @@ class SACAgent(BaseAlgorithm):
         os.makedirs(self.experiment_dir, exist_ok=True)
         os.makedirs(self.nn_dir, exist_ok=True)
         os.makedirs(self.summaries_dir, exist_ok=True)
+        save_cmd(self.experiment_dir)
 
         self.algo_observer = config['features']['observer']
         self.algo_observer.before_init(base_name, config, self.experiment_name)
@@ -577,8 +578,8 @@ class SACAgent(BaseAlgorithm):
     def train(self):
         self.init_tensors()
         self.algo_observer.after_init(self)
-        test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
-        render_check = Every(self.vec_env.env.render_every_episodes * self.vec_env.env.max_episode_length)
+        test_check = Every(self.test_every_episodes * (self.vec_env.env.max_episode_length-1))
+        render_check = Every(self.vec_env.env.render_every_episodes * (self.vec_env.env.max_episode_length-1))
         reset_check = Every(self.reset_every_steps)
         total_time = 0
         # rep_count = 0
@@ -687,12 +688,13 @@ class SACAgent(BaseAlgorithm):
         self.vec_env.env.test = True
         if render:
             self.vec_env.env.override_render = True
-        self.vec_env.env.reset_idx()
-        obs = self.obs
-        if isinstance(obs, dict):
-            obs = self.obs['obs'] 
 
-        for n in range(self.vec_env.env.max_episode_length):
+        obs = self.env_reset()
+        if isinstance(obs, dict):
+            obs = obs['obs']
+        self.obs = obs
+
+        for n in range(self.vec_env.env.max_episode_length - 1):
             with torch.no_grad():
                 action = self.act(obs.float(), self.env_info["action_space"].shape, sample=True)
 
@@ -708,4 +710,8 @@ class SACAgent(BaseAlgorithm):
         self.vec_env.env.test = False
         if render:
             self.vec_env.env.override_render = False
-        self.vec_env.env.reset_idx()
+
+        obs = self.env_reset()
+        if isinstance(obs, dict):
+            obs = obs['obs']
+        self.obs = obs
