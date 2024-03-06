@@ -7,6 +7,7 @@ from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
 from isaacgymenvs.ppo.torch_ext import explained_variance
 from isaacgymenvs.sac import her_replay_buffer
+from isaacgymenvs.sac import validation_replay_buffer
 from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm, save_cmd
 
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
@@ -45,8 +46,11 @@ class SACAgent(BaseAlgorithm):
         self.grad_norm = check_for_none(self.config.get('grad_norm', None))
         self.normalize_input = config.get("normalize_input", False)
         self.relabel_ratio = config.get("relabel_ratio", 0.0)
+        self.relabel_ratio_random = config.get("relabel_ratio_random", 0.0)
         self.test_every_episodes = config.get('test_every_episodes', 10) 
         self.reset_every_steps = check_for_none(config.get('reset_every_steps', None))
+        self.validation_ratio = config.get('validation_ratio', 0.0)
+        self.policy_update_fraction = config.get('policy_update_fraction', 1)
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -69,15 +73,17 @@ class SACAgent(BaseAlgorithm):
         print("Number of Agents", self.num_actors, "Batch Size", self.batch_size)
         self.build_network()
 
-        if self.relabel_ratio > 0.0:
-            self.replay_buffer = her_replay_buffer.HERReplayBuffer(self.env_info['observation_space'].shape,
+        if self.relabel_ratio > 0.0 or self.relabel_ratio_random > 0.0:
+            self.replay_buffer = validation_replay_buffer.ValidationHERReplayBuffer(self.env_info['observation_space'].shape,
                                                             self.env_info['action_space'].shape,
                                                             self.replay_buffer_size,
                                                             self.num_actors,
                                                             self._device,
                                                             self.vec_env.env,
                                                             self.rewards_shaper,
-                                                            self.relabel_ratio)
+                                                            self.relabel_ratio,
+                                                            self.relabel_ratio_random,
+                                                            self.validation_ratio)
         else:
             self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
                                                                 self.env_info['action_space'].shape,
@@ -190,7 +196,6 @@ class SACAgent(BaseAlgorithm):
         # folders inside <train_dir>/<experiment_dir> for a specific purpose
         self.nn_dir = os.path.join(self.experiment_dir, 'nn')
         self.summaries_dir = os.path.join(self.experiment_dir, 'summaries')
-        save_cmd(self.experiment_dir)
 
         os.makedirs(self.train_dir, exist_ok=True)
         os.makedirs(self.experiment_dir, exist_ok=True)
@@ -294,7 +299,7 @@ class SACAgent(BaseAlgorithm):
     def set_train(self):
         self.model.train()
 
-    def update_critic(self, obs, action, reward, next_obs, not_done, step):
+    def update_critic(self, obs, action, reward, next_obs, not_done):
         with torch.no_grad():
             dist = self.model.actor(next_obs)
             next_action = dist.rsample()
@@ -314,29 +319,22 @@ class SACAgent(BaseAlgorithm):
         critic1_loss = nn.MSELoss()(current_Q1, target_Q)
         critic2_loss = nn.MSELoss()(current_Q2, target_Q)
         critic_loss = critic1_loss + critic2_loss 
-        self.critic_optimizer.zero_grad(set_to_none=True)
-        critic_loss.backward()
-        if self.grad_norm is not None:
-            grad_norm = nn.utils.clip_grad_norm_(self.model.sac_network.critic.parameters(), self.grad_norm)
-        else:
-            grad_norm = get_grad_norm(self.model.sac_network.critic.parameters())
-        self.critic_optimizer.step()
 
         info = {'losses/c_loss': critic_loss.detach(),
                 'losses/c1_loss': critic1_loss.detach(),
                 'losses/c2_loss': critic2_loss.detach(),
-                'info/grad_norm': grad_norm.detach(),
+                'info/train_reward': reward.mean().detach(),
                 'info/c_explained_variance': explained_variance(current_Q1, target_Q),}
-        
+            
         if self.relabel_ratio > 0:
             bs = current_Q1.shape[0]
             real = int(bs * (1 - self.relabel_ratio))
             info['losses/c_loss_original'] = nn.MSELoss()(current_Q1[:real], target_Q[:real]).detach()
             info['losses/c_loss_relabeled'] = nn.MSELoss()(current_Q1[real:], target_Q[real:]).detach()
 
-        return critic_loss.detach(), info
+        return critic_loss, info
 
-    def update_actor_and_alpha(self, obs, step):
+    def update_actor_and_alpha(self, obs):
         for p in self.model.sac_network.critic.parameters():
             p.requires_grad = False
 
@@ -352,25 +350,12 @@ class SACAgent(BaseAlgorithm):
         actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
         actor_loss = actor_loss.mean()
 
-        self.actor_optimizer.zero_grad(set_to_none=True)
-        actor_loss.backward()
-        self.actor_optimizer.step()
-
         for p in self.model.sac_network.critic.parameters():
             p.requires_grad = True
-
-        if self.learnable_temperature:
-            # alpha_loss = (self.log_alpha * (-log_prob - self.target_entropy).detach()).mean()
-            alpha_loss = (self.alpha * (-log_prob - self.target_entropy).detach()).mean()
-            self.log_alpha_optimizer.zero_grad(set_to_none=True)
-            alpha_loss.backward()
-            self.log_alpha_optimizer.step()
-        else:
-            alpha_loss = None
-
+        
         info = {'losses/a_loss': actor_loss.detach(), 
                'losses/entropy': entropy.detach(),
-               'losses/alpha_loss': alpha_loss, # TODO: maybe not self.alpha'
+               'info/log_prob': log_prob.mean().detach(),
                'info/alpha': self.alpha.detach(),
                'info/actor_q': actor_Q.mean().detach(),
                'info/target_entropy': torch.ones(1) * self.target_entropy,}
@@ -381,7 +366,7 @@ class SACAgent(BaseAlgorithm):
             info['info/actor_q'] = actor_Q[:real].mean().detach()
             info['info/actor_q_relabeled'] = actor_Q[real:].mean().detach()
 
-        return info
+        return actor_loss, info
 
     def soft_update_params(self, net, target_net, tau):
         for param, target_param in zip(net.parameters(), target_net.parameters()):
@@ -390,19 +375,57 @@ class SACAgent(BaseAlgorithm):
 
     def update(self, step):
         obs, action, reward, next_obs, done = self.replay_buffer.sample(self.batch_size)
-        not_done = ~done
 
-        obs = self.preproc_obs(obs)
-        next_obs = self.preproc_obs(next_obs)
-        critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, not_done, step)
-        actor_loss_info = self.update_actor_and_alpha(obs, step)
+        # Critic
+        critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
+        self.critic_optimizer.zero_grad(set_to_none=True)
+        critic_loss.backward()
+        if self.grad_norm is not None:
+            grad_norm = nn.utils.clip_grad_norm_(self.model.sac_network.critic.parameters(), self.grad_norm)
+        else:
+            grad_norm = get_grad_norm(self.model.sac_network.critic.parameters())
+        critic_loss_info['info/grad_norm'] = grad_norm.detach()
+        self.critic_optimizer.step()
 
-        # self.critic_optimizer.step()
-        # self.actor_optimizer.step()
+        actor_loss_info = {}
+        if step % self.policy_update_fraction == 0:
+            # Actor
+            actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
+            self.actor_optimizer.zero_grad(set_to_none=True)
+            actor_loss.backward()
+            self.actor_optimizer.step()
+
+            # Alpha
+            if self.learnable_temperature:
+                # alpha_loss = (self.log_alpha * (-log_prob - self.target_entropy).detach()).mean()
+                alpha_loss = self.alpha * (-actor_loss_info['info/log_prob'] - self.target_entropy)
+                self.log_alpha_optimizer.zero_grad(set_to_none=True)
+                alpha_loss.backward()
+                self.log_alpha_optimizer.step()
+                actor_loss_info['losses/alpha_loss'] = alpha_loss # TODO: maybe not self.alpha'
+            else:
+                alpha_loss = None
 
         self.soft_update_params(self.model.sac_network.critic, self.model.sac_network.critic_target,
                                      self.critic_tau)
         return actor_loss_info, critic_loss_info
+
+    def validate(self):  
+        obs, action, reward, next_obs, done = self.replay_buffer.sample(self.batch_size, validation=True)
+
+        with torch.no_grad():
+            critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
+            actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
+        
+        info = {'val/a_loss': actor_loss_info['losses/a_loss'],
+                'val/actor_q': actor_loss_info['info/actor_q'],
+                'val/actor_q_relabeled': actor_loss_info['info/actor_q_relabeled'],
+                'val/c_loss': critic_loss_info['losses/c_loss'],
+                'val/c_loss_original': critic_loss_info['losses/c_loss_original'],
+                'val/c_loss_relabeled': critic_loss_info['losses/c_loss_relabeled'],}
+
+        return info
+
 
     def preproc_obs(self, obs):
         if isinstance(obs, dict):
@@ -548,7 +571,7 @@ class SACAgent(BaseAlgorithm):
                 self.set_train()
                 update_time_start = time.time()
                 for _ in range(self.gradient_steps):
-                    actor_loss_info, critic_loss_info = self.update(self.epoch_num)
+                    actor_loss_info, critic_loss_info = self.update(self.update_num)
                     for key, value in actor_loss_info.items(): actor_metrics[key].append(value)
                     for key, value in critic_loss_info.items(): critic_metrics[key].append(value)
                     self.update_num += 1
@@ -624,6 +647,11 @@ class SACAgent(BaseAlgorithm):
                 self.writer.add_scalar('info/epochs', self.epoch_num, self.frame)
                 self.writer.add_scalar('info/updates', self.update_num, self.frame)
                 self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time)
+
+                if self.validation_ratio > 0.0:
+                    val_info = self.validate()
+                    for key, value in val_info.items():
+                        self.writer.add_scalar(key, value.item(), self.frame)
 
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()

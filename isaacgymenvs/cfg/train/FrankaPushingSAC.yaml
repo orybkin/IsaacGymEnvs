@@ -34,26 +34,35 @@ params:
     reward_shaper:
       scale_value: 1.0
     max_frames: 1_000_000_000
+
     num_steps_per_episode: 1
     gradient_steps: 1
+    policy_update_fraction: 1
+
     save_best_after: 100
     save_frequency: 1000
     test_every_episodes: 10
-    target_entropy_coef: 1.0
-    gamma: 0.99
-    init_alpha: 1.0
+    validation_ratio: 0.0
+
+    batch_size: 4096
     alpha_lr: 0.005
     actor_lr: 0.0005
     critic_lr: 0.0005
-    critic_tau: 0.005
-    grad_norm: None
     reset_every_steps: None
-    batch_size: 4096
-    relabel_ratio: 0.0
+    grad_norm: None
+    critic_tau: 0.005
+
+    gamma: 0.99
+    init_alpha: 1.0
+    target_entropy_coef: 1.0
     learnable_temperature: true
+
+    relabel_ratio: 0.0
+    relabel_ratio_random: 0.0
+
     num_seed_steps: 5
     num_warmup_steps: 10
-    replay_buffer_size: 1000000
+    replay_buffer_size: 15998976
     num_actors: ${....task.env.numEnvs}
 
     # use_diagnostics: True
