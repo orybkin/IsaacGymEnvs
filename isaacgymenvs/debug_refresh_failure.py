@@ -60,10 +60,10 @@ og_color = gymapi.Vec3(0.6, 0.1, 0.1)
 new_color = gymapi.Vec3(0.5, 0.5, 0.5)
 
 cube_start_pose = gymapi.Transform()
-cube_start_pose.p = gymapi.Vec3(-1.0, 1.0, 0.0)
+cube_start_pose.p = gymapi.Vec3(-1.0, 2.0, 1.0)
 cube_start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
+
 cube_id = gym.create_actor(env, cube_asset, cube_start_pose, "cube", 0, 0, 0)
-gym.set_rigid_body_color(env, cube_id, 0, gymapi.MESH_VISUAL, og_color)
 
 cube_mass = None
 
@@ -81,7 +81,6 @@ def reset():
     root_state[0, :, :2] = rigid_body_state[0, :, :2] = 2 * (loc[:, :2] - 0.5)
     root_state[0, :, 2] = rigid_body_state[0, :, 2] = loc[:, 2] + 0.5 # force z coordinate to be large
     gym.set_actor_root_state_tensor(sim, gymtorch.unwrap_tensor(root_state))
-    gym.set_rigid_body_state_tensor(sim, gymtorch.unwrap_tensor(rigid_body_state))
 
 def refresh():
     gym.refresh_actor_root_state_tensor(sim)
@@ -97,10 +96,9 @@ def render():
     gym.fetch_results(sim, True)
 
     # refresh state data in the tensor
-    gym.refresh_rigid_body_state_tensor(sim)
+    refresh()
     gym.step_graphics(sim)
 
-    # render sensors and refresh camera tensors
     gym.render_all_camera_sensors(sim)
     gym.start_access_image_tensors(sim)
 
@@ -111,28 +109,38 @@ def render():
 def print_info():
     print('root:  ', root_state[0][:,:3])
     print('rigid: ', rigid_body_state[0][:,:3])
+        
+def run_steps(n):
+    for _ in range(n):
+        step()
+        render()
+        print_info()
 
-print_info()
+cube_mass = None
+
+def change_mass(factor):
+    global cube_mass
+    properties = gym.get_actor_rigid_body_properties(env, cube_id)[0]
+    if cube_mass is None: cube_mass = properties.mass
+    properties.mass = cube_mass * factor
+    gym.set_actor_rigid_body_properties(env, cube_id, [properties], True)
+
+run_steps(5)
+
+print("color switch")
+
+gym.set_rigid_body_color(env, cube_id, 0, gymapi.MESH_VISUAL, og_color)
+change_mass(10)
+step()
 reset()
-print_info()
-refresh()
-print_info()
-for i in range(5):
-    step()
-    render()
-    print('root:  ', root_state[0][:,:3])
-    print('rigid: ', rigid_body_state[0][:,:3])
+run_steps(5)
+
+print("color switch")
 
 gym.set_rigid_body_color(env, cube_id, 0, gymapi.MESH_VISUAL, new_color)
+change_mass(1)
+step()
 reset()
-refresh()
-print_info()
-for i in range(5):
-    step()
-    render()
-    print('root:  ', root_state[0][:,:3])
-    print('rigid: ', rigid_body_state[0][:,:3])
-    
-# breakpoint()
+run_steps(5)
     
 imageio.mimsave("render.mp4", images, format='MP4')

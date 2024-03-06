@@ -30,21 +30,22 @@ og1_states = env.states['cube0_pos'].cpu().numpy()
 print(og1_states)
 
 env.freeze_cubes()
-env.refresh()
+env.step()
+env.reset_idx()
 env.render("render_new1.png")
 
 for _ in range(10):
     env.step()
 
 env.freeze_cubes()
-env.refresh()
+env.step()
+env.reset_idx()
 env.render("render_og2.png")
 og2_states = env.states['cube0_pos'].cpu().numpy()
 print(og2_states)
 
 for _ in range(10):
     env.step()
-    env.refresh()
 env.render("render_og3.png")
 og3_states = env.states['cube0_pos'].cpu().numpy()
 print(og3_states)

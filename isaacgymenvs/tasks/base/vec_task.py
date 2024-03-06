@@ -116,6 +116,7 @@ class Env(ABC):
         self.clip_actions = config["env"].get("clipActions", np.Inf)
 
         self.render_every_episodes = config["env"].get("renderEveryEpisodes", 1)
+        self._override_render_default = config["env"].get("overrideRender", False)
         self.override_render = False
 
         # Total number of training frames since the beginning of the experiment.
@@ -383,6 +384,9 @@ class VecTask(Env):
             Observations are dict of observations (currently only one member called 'obs')
         """
 
+        # print(self.states['cube1_pos'])
+        # breakpoint()
+
         # randomize actions
         if self.dr_randomizations.get('actions', None):
             actions = self.dr_randomizations['actions']['noise_lambda'](actions)
@@ -394,10 +398,9 @@ class VecTask(Env):
 
         # step physics and render each frame
         for i in range(self.control_freq_inv):
+            self.gym.simulate(self.sim)
             if self.force_render:
                 self.render()
-            self.gym.simulate(self.sim)
-
         # to fix!
         if self.device == 'cpu':
             self.gym.fetch_results(self.sim, True)
@@ -531,6 +534,8 @@ class VecTask(Env):
                 return np.array(img)
         elif self.render_this_step():
             self.gym.fetch_results(self.sim, True)
+            self._refresh()
+            # self.gym.refresh_rigid_body_state_tensor(self.sim)
             self.gym.step_graphics(self.sim)
 
     def __parse_sim_params(self, physics_engine: str, config_sim: Dict[str, Any]) -> gymapi.SimParams:

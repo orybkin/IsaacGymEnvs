@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import os
+import os.path as osp
 from collections import deque
 from typing import Callable, Dict, Tuple, Any
 
@@ -130,7 +131,7 @@ def get_rlgames_env_creator(
 class RLGPUAlgoObserver(AlgoObserver):
     """Allows us to log stats from the env along with the algorithm running stats. """
 
-    def __init__(self):
+    def __init__(self, experiment_name):
         super().__init__()
         self.algo = None
         self.writer = None
@@ -144,6 +145,7 @@ class RLGPUAlgoObserver(AlgoObserver):
         self.episodic_stats = dict()
         self.videos = []
         self.new_finished_episodes = False
+        self.experiment_name = experiment_name
 
     def after_init(self, algo):
         self.algo = algo
@@ -249,9 +251,16 @@ class RLGPUAlgoObserver(AlgoObserver):
                 from tensorboardX.utils import _prepare_video
                 import imageio
                 import torchvision
-                imageio.mimwrite(f'eval{phase}.gif', (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8))
-                imageio.imwrite(f'eval_start{phase}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
-                imageio.imwrite(f'eval_end{phase}.png', (torchvision.utils.make_grid(torch.tensor(self.videos[-1]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0]))
+                save_dir = osp.join("runs", self.experiment_name, "viz")
+                if not osp.exists(save_dir):
+                    os.makedirs(save_dir)
+
+                video = (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8)
+                get_frame = lambda idx: (torchvision.utils.make_grid(torch.tensor(self.videos[idx]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0])
+                imageio.mimwrite(osp.join(save_dir, f'eval{phase}_{epoch_num}.mp4'), video)
+                imageio.mimwrite(osp.join(save_dir, f'eval{phase}_{epoch_num}.gif'), video)
+                imageio.imwrite(osp.join(save_dir, f'eval_start{phase}_{epoch_num}.png'), get_frame(0))
+                imageio.imwrite(osp.join(save_dir, f'eval_end{phase}_{epoch_num}.png'), get_frame(-1))
                 self.videos = []
 
         for k, v in self.direct_info.items():

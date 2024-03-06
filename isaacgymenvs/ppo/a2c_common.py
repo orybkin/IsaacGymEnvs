@@ -384,7 +384,7 @@ class A2CBase(BaseAlgorithm):
             network = builder.load(params['config']['central_value_config'])
             self.config['central_value_config']['network'] = network
 
-    def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames):
+    def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames, phase):
         # do we need scaled time?
         self.diagnostics.send_info(self.writer)
         self.writer.add_scalar('performance/step_inference_rl_update_fps', curr_frames / scaled_time, frame)
@@ -403,7 +403,7 @@ class A2CBase(BaseAlgorithm):
             if len(v) > 0:
                 self.writer.add_scalar(k, torch_ext.mean_list(v).item(), frame)
 
-        self.algo_observer.after_print_stats(frame, epoch_num, total_time)
+        self.algo_observer.after_print_stats(frame, epoch_num, total_time, phase)
 
     def set_eval(self):
         self.model.eval()
@@ -477,9 +477,6 @@ class A2CBase(BaseAlgorithm):
     @property
     def device(self):
         return self.ppo_device
-
-    def reset_envs(self):
-        self.obs = self.env_reset()
 
     def init_tensors(self):
         batch_size = self.num_agents * self.num_actors
@@ -775,6 +772,8 @@ class A2CBase(BaseAlgorithm):
         step_time = 0.0
 
         for n in range(self.horizon_length):
+            # print(self.vec_env.env.states['cube1_pos'])
+            # breakpoint()
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
@@ -1115,7 +1114,7 @@ class DiscreteA2CBase(A2CBase):
 
                 self.write_stats(total_time, epoch_num, step_time, play_time, update_time,
                                 a_losses, c_losses, entropies, kls, last_lr, lr_mul, frame, 
-                                scaled_time, scaled_play_time, curr_frames)
+                                scaled_time, scaled_play_time, curr_frames, '_train')
 
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()
@@ -1430,7 +1429,7 @@ class ContinuousA2CBase(A2CBase):
         self.vec_env.env.test = True
         if render:
             self.vec_env.env.override_render = True
-        self.vec_env.env.reset_idx()
+        self.env_reset()
         cut = self.vec_env.env.max_pix
 
         update_list = self.update_list
@@ -1460,7 +1459,7 @@ class ContinuousA2CBase(A2CBase):
         self.vec_env.env.test = False
         if render:
             self.vec_env.env.override_render = False
-        self.vec_env.env.reset_idx()
+        self.env_reset()
 
     def train(self):
         self.init_tensors()
@@ -1504,7 +1503,7 @@ class ContinuousA2CBase(A2CBase):
 
                 self.write_stats(total_time, epoch_num, step_time, play_time, update_time,
                                 metrics, last_lr, lr_mul, frame,
-                                scaled_time, scaled_play_time, curr_frames)
+                                scaled_time, scaled_play_time, curr_frames,'_train')
 
                 if self.has_soft_aug:
                     self.writer.add_scalar('losses/aug_loss', np.mean(aug_losses), frame)

@@ -256,7 +256,8 @@ class CubesDebug:
         self.gym.fetch_results(self.sim, True)
 
         # refresh state data in the tensor
-        self.gym.refresh_rigid_body_state_tensor(self.sim)
+        self.refresh()
+        # self.gym.refresh_rigid_body_state_tensor(self.sim)
         self.gym.step_graphics(self.sim)
 
         # render sensors and refresh camera tensors
