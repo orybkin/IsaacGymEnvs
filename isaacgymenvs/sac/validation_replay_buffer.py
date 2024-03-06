@@ -61,9 +61,9 @@ class ValidationHERReplayBuffer(HERReplayBuffer):
     def val_data(self):
         return [l[:, self.train_envs:] for l in self.data]
 
-    def add(self, obs, action, reward, next_obs, done):
+    def add(self, obs, action, reward, next_obs, terminated, done):
         steps_to_go = torch.zeros_like(done)[:, 0]
-        for x, y in zip(self.data, [obs, action, reward, next_obs, done, steps_to_go]):
+        for x, y in zip(self.data, [obs, action, reward, next_obs, terminated, steps_to_go]):
             x[self.idx] = y
 
         # Get steps-to-go
@@ -144,6 +144,7 @@ def randint(high): return torch.randint(2**63 - 1, size=high.shape, device=high.
 
 
 if __name__ == "__main__":
+    ## Test sampling
     buffer = ValidationHERReplayBuffer(obs_shape=(3,),
                                     action_shape=(1,),
                                     capacity=200,
@@ -155,16 +156,14 @@ if __name__ == "__main__":
                                     random_ratio=0.2,
                                     validation_ratio=0.0)
 
-
-
     for i in range(20):
         # add 10 random tensor observations of batches of 10 
         buffer.add(torch.rand(10, 3, dtype=torch.float32), 
-                torch.rand(10, 1, dtype=torch.float32), 
-                torch.rand(10, 1, dtype=torch.float32), 
-                torch.rand(10, 3, dtype=torch.float32), 
-                (((i + 1) % 4) == 0) * torch.ones(10, 1, dtype=torch.float32))
+                    torch.rand(10, 1, dtype=torch.float32), 
+                    torch.rand(10, 1, dtype=torch.float32), 
+                    torch.rand(10, 3, dtype=torch.float32), 
+                    (((i + 1) % 4) == 0) * torch.ones(10, 1, dtype=torch.float32))
         print(buffer.steps_to_go[:, 0])
         
-    buffer.sample(10)
+    # buffer.sample(10)
 

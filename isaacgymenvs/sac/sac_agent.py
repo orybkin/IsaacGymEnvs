@@ -325,7 +325,7 @@ class SACAgent(BaseAlgorithm):
                 'losses/c2_loss': critic2_loss.detach(),
                 'info/train_reward': reward.mean().detach(),
                 'info/c_explained_variance': explained_variance(current_Q1, target_Q),}
-            
+
         if self.relabel_ratio > 0:
             bs = current_Q1.shape[0]
             real = int(bs * (1 - self.relabel_ratio))
@@ -565,7 +565,7 @@ class SACAgent(BaseAlgorithm):
             self.obs = next_obs.clone()
             rewards = self.rewards_shaper(rewards)
 
-            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1))
+            self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1), torch.unsqueeze(dones, 1))
 
             if not random_exploration:
                 self.set_train()
