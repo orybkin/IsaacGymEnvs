@@ -3,6 +3,8 @@ from isaacgymenvs.ppo.algo_observer import AlgoObserver
 from isaacgymenvs.utils.utils import retry
 from isaacgymenvs.utils.reformat import omegaconf_to_dict
 
+import os
+
 
 class WandbAlgoObserver(AlgoObserver):
     """Need this to propagate the correct experiment name after initialization."""
@@ -18,9 +20,7 @@ class WandbAlgoObserver(AlgoObserver):
         """
 
         import wandb
-
-        wandb_unique_id = f"uid_{experiment_name}"
-        print(f"Wandb using unique id {wandb_unique_id}")
+        print(f"Wandb using unique id {experiment_name}")
 
         cfg = self.cfg
 
@@ -32,8 +32,9 @@ class WandbAlgoObserver(AlgoObserver):
                 entity=cfg.wandb_entity,
                 group=cfg.wandb_group,
                 tags=cfg.wandb_tags,
+                dir=os.path.join('runs', experiment_name),
                 sync_tensorboard=True,
-                id=wandb_unique_id,
+                id=experiment_name,
                 name=experiment_name,
                 resume=True,
                 settings=wandb.Settings(start_method='fork'),
