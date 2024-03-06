@@ -30,10 +30,12 @@ import os
 from collections import deque
 from typing import Callable, Dict, Tuple, Any
 
-import os
 import gym
 import numpy as np
 import torch
+import sys
+import pipes
+import pathlib
 from rl_games.common import env_configurations, vecenv
 from isaacgymenvs.ppo.algo_observer import AlgoObserver
 
@@ -513,3 +515,15 @@ def get_grad_norm(parameters, norm_type: float = 2.0) -> torch.Tensor:
     else:
         total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type)
     return total_norm
+
+
+def save_cmd(base_dir):
+  if not isinstance(base_dir, pathlib.Path):
+    base_dir = pathlib.Path(base_dir)
+  train_cmd = 'python ' + ' '.join([sys.argv[0]] + [pipes.quote(s) for s in sys.argv[1:]])
+  train_cmd += '\n'
+  print('\n' + '*' * 80)
+  print('Training command:\n' + train_cmd)
+  print('*' * 80 + '\n')
+  with open(base_dir / "cmd.txt", "w") as f:
+    f.write(train_cmd)

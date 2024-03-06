@@ -7,7 +7,7 @@ from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
 from isaacgymenvs.ppo.torch_ext import explained_variance
 from isaacgymenvs.sac import her_replay_buffer
-from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm
+from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm, save_cmd
 
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from torch.utils.tensorboard import SummaryWriter
@@ -190,6 +190,7 @@ class SACAgent(BaseAlgorithm):
         # folders inside <train_dir>/<experiment_dir> for a specific purpose
         self.nn_dir = os.path.join(self.experiment_dir, 'nn')
         self.summaries_dir = os.path.join(self.experiment_dir, 'summaries')
+        save_cmd(self.experiment_dir)
 
         os.makedirs(self.train_dir, exist_ok=True)
         os.makedirs(self.experiment_dir, exist_ok=True)
