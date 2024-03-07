@@ -108,6 +108,7 @@ class FrankaPushing(VecTask):
         self.reward_settings = {}
 
         # Controller type
+        self.observe_velocities = self.cfg["env"]["observeVelocities"]
         self.control_type = self.cfg["env"]["controlType"]
         assert self.control_type in {"osc", "joint_tor"},\
             "Invalid control type specified. Must be one of: {osc, joint_tor}"
@@ -115,6 +116,8 @@ class FrankaPushing(VecTask):
         # dimensions
         # obs include: eef_pose (7) + q_gripper (2)
         self.cfg["env"]["numObservations"] = 12 + 10 * self.n_observed_cubes if self.control_type == "osc" else 19 + 10 * self.n_observed_cubes
+        if self.observe_velocities:
+            self.cfg["env"]["numObservations"] += 6 + 3 * self.n_observed_cubes
         # actions include: delta EEF if OSC (6) or joint torques (7) + bool gripper (1)
         self.cfg["env"]["numActions"] = 7 if self.control_type == "osc" else 8
 
@@ -500,6 +503,7 @@ class FrankaPushing(VecTask):
         # Cubes
         for j in range(self.n_cubes):
             self.states.update({
+                f"cube{j}_angvel": self._cube_states[j][:, 10:],
                 f"cube{j}_vel": self._cube_states[j][:, 7:10],
                 f"cube{j}_quat": self._cube_states[j][:, 3:7],
                 f"cube{j}_pos": self._cube_states[j][:, :3],
@@ -527,8 +531,12 @@ class FrankaPushing(VecTask):
     def compute_observations(self):
         self._refresh()
         obs = ["eef_pos", "eef_quat", "goal_pos"]
+        if self.observe_velocities:
+            obs += ["eef_vel"]
         for j in range(self.n_observed_cubes):
             obs = obs + [f"cube{j}_quat", f"cube{j}_pos", f"cube{j}_vel"]
+            if self.observe_velocities:
+                obs += [f"cube{j}_angvel"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
 
@@ -752,7 +760,7 @@ class FrankaPushing(VecTask):
                                                       torch.rand(num_resets, 3, device=self.device) - 0.5)
     
         if self.test:
-            for t in range(len(self.tasks)):
+            for t in range(min(len(self.tasks), sampled_cube_state.shape[0])):
                 for i in range(3):
                     sampled_cube_state[t, i] = table_center[i] + self.tasks[t]['cubes'][cube][i]
 
@@ -846,8 +854,8 @@ class FrankaPushing(VecTask):
             sampled_goal_state[:, 0] = center[0] + 0.11
             sampled_goal_state[:, 1] = center[1] - 0.11
             sampled_goal_state[:, 2] = center[2] 
-            for t in range(len(self.tasks)):
-                if 'goal' in self.tasks[t]:
+            for t in range(min(len(self.tasks), sampled_goal_state.shape[0])):
+                if len(self.tasks[t]) > self.n_cubes:
                     for i in range(3):
                         sampled_goal_state[t, i] = center[i] + self.tasks[t]['goal'][i]
 
@@ -944,7 +952,7 @@ class FrankaPushing(VecTask):
         metrics["success@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02
         metrics["failure@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) > 0.02
         if self.test:
-            for i in range(self.max_pix):
+            for i in range(min(self.max_pix, self.states['goal_pos'].shape[0])):
                 metrics[f"goal_dist_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i]
                 metrics[f"success@4_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.04
                 metrics[f"success@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.02

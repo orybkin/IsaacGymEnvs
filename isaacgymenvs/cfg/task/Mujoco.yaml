@@ -1,0 +1,53 @@
+# used to create the object
+name: Mujoco
+
+physics_engine: ${..physics_engine}
+task_name: Humanoid-v2
+
+# if given, will override the device setting in gym. 
+env:
+  numEnvs: 1
+  envSpacing: 1.5
+  episodeLength: 256
+  enableDebugVis: False
+
+  clipObservations: 5.0
+  clipActions: 1.0
+
+  startRotationNoise: 0.785
+  frankaPositionNoise: 0.0
+  frankaRotationNoise: 0.0
+  frankaDofNoise: 0.25
+
+  distRewardScale: 1
+  distRewardDropoff: 30
+  distRewardThreshold: 0.0
+
+  aggregateMode: 3
+
+  actionScale: 1.0
+
+  task: standard # Can be standard, easy, hard
+  distanceFromBlock: 0.0
+  nCubes: 6
+  startPositionNoise: 0.12
+
+  rigidCubes: False
+  testTask: -1
+
+  renderEveryEpisodes: 1000
+
+  controlType: osc  # options are {joint_tor, osc}
+
+  asset:
+    assetRoot: "../../assets"
+    assetFileNameFranka: "urdf/franka_description/robots/franka_panda_gripper.urdf"
+
+  # set to True if you use camera sensors in the environment
+  enableCameraSensors: True
+
+  sim:
+    use_gpu_pipeline: False
+
+task:
+  randomize: False

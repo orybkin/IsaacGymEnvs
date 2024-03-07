@@ -37,6 +37,7 @@ env:
   renderEveryEpisodes: 1000
 
   controlType: osc  # options are {joint_tor, osc}
+  observeVelocities: False
 
   asset:
     assetRoot: "../../assets"

@@ -8,48 +8,61 @@ import imageio
 from isaacgym import gymapi
 from isaacgym import gymtorch
 import torch
-import numpy as np
 
-from tasks.cubes_debug import CubesDebug
 
-def mat33_to_np(mat):
-    return np.array([
-        [mat.x.x, mat.x.y, mat.x.z],
-        [mat.y.x, mat.y.y, mat.y.z],
-        [mat.z.x, mat.z.y, mat.z.z]
-    ])
+gym = gymapi.acquire_gym()
 
-env = CubesDebug(1)
-env.reset_idx()
-env.refresh()
+# Config    
+sim_params = gymapi.SimParams()
+sim_params.physx.solver_type = 1
+sim_params.physx.num_threads = 0
+sim_params.physx.use_gpu = True
+sim_params.use_gpu_pipeline = True
 
-# breakpoint()
+cam_props = gymapi.CameraProperties()
+cam_props.enable_tensors = True
 
-env.render("render_og1.png")
-og1_states = env.states['cube0_pos'].cpu().numpy()
-print(og1_states)
+sim = gym.create_sim(0, 0, gymapi.SIM_PHYSX, sim_params)
+if sim is None:
+    print("*** Failed to create sim")
+    quit()
 
-env.freeze_cubes()
-env.step()
-env.reset_idx()
-env.render("render_new1.png")
+# Add ground plane
+plane_params = gymapi.PlaneParams()
+gym.add_ground(sim, plane_params)
 
-for _ in range(10):
-    env.step()
 
-env.freeze_cubes()
-env.step()
-env.reset_idx()
-env.render("render_og2.png")
-og2_states = env.states['cube0_pos'].cpu().numpy()
-print(og2_states)
+for i in range(2):
+    # create env
+    env = gym.create_env(sim, gymapi.Vec3(-2.0, 0.0, -2.0), gymapi.Vec3(2.0, 2.0, 2.0), 1)
 
-for _ in range(10):
-    env.step()
-env.render("render_og3.png")
-og3_states = env.states['cube0_pos'].cpu().numpy()
-print(og3_states)
+    # add camera
+    # cam_handle = gym.create_camera_sensor(env, cam_props)
+    # gym.set_camera_location(cam_handle, env, gymapi.Vec3(5, 1, 0), gymapi.Vec3(0, 1, 0))
 
-# random refresh and physics simulation steps should do something
-assert not np.all(np.isclose(og1_states, og2_states))
-assert not np.all(np.isclose(og3_states, og2_states))
+    # obtain camera tensor
+    # cam_tensor = gym.get_camera_image_gpu_tensor(sim, env, cam_handle, gymapi.IMAGE_COLOR)
+
+    # wrap camera tensor in a pytorch tensor
+    # torch_cam_tensor = gymtorch.wrap_tensor(cam_tensor)
+
+    # prepare tensor access
+    gym.prepare_sim(sim)
+
+    gym.simulate(sim)
+    gym.fetch_results(sim, True)
+
+    # refresh state data in the tensor
+    gym.refresh_rigid_body_state_tensor(sim)
+    # gym.step_graphics(sim)
+
+    # render sensors and refresh camera tensors
+    # gym.render_all_camera_sensors(sim)
+    # gym.start_access_image_tensors(sim)
+
+    # imageio.imwrite("render.png" , torch_cam_tensor.cpu().numpy())
+
+    # import pdb; pdb.set_trace()
+
+    # gym.end_access_image_tensors(sim)
+

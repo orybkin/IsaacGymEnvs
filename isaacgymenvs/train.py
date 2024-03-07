@@ -39,7 +39,6 @@ import hydra
 
 from isaacgymenvs.utils.rlgames_utils import multi_gpu_get_rank
 
-from isaacgymenvs.pbt.pbt import PbtAlgoObserver, initial_pbt_check
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import to_absolute_path
 from isaacgymenvs.tasks import isaacgym_task_map
