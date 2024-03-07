@@ -772,8 +772,6 @@ class A2CBase(BaseAlgorithm):
         step_time = 0.0
 
         for n in range(self.horizon_length):
-            # print(self.vec_env.env.states['cube1_pos'])
-            # breakpoint()
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)

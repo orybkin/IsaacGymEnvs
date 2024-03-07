@@ -261,9 +261,6 @@ class FrankaPushing(VecTask):
         for j in range(self.n_cubes):
             cube_assets += [self.gym.create_box(self.sim, *([self.cube_sizes[j]] * 3), cube_options)]
             cube_colors += [gymapi.Vec3(0.0, np.random.rand(), np.random.rand())]
-            # if self.rigid_cubes:
-            #     cube_options.fix_base_link = True
-            #     cube_colors[-1] = gymapi.Vec3(0.5, 0.5, 0.5)
         cube_colors[0] = gymapi.Vec3(0.6, 0.1, 0.0)
 
         self.num_franka_bodies = self.gym.get_asset_rigid_body_count(franka_asset)
@@ -510,23 +507,14 @@ class FrankaPushing(VecTask):
             })
 
     def _refresh(self):
-        # breakpoint()
-        # print(self.states['cube1_pos'])
         self.gym.refresh_actor_root_state_tensor(self.sim)
-        # print(self.states['cube1_pos'])
         self.gym.refresh_dof_state_tensor(self.sim)
-        # print(self.states['cube1_pos'])
         self.gym.refresh_rigid_body_state_tensor(self.sim)
-        # print(self.states['cube1_pos'])
         self.gym.refresh_jacobian_tensors(self.sim)
-        # print(self.states['cube1_pos'])
         self.gym.refresh_mass_matrix_tensors(self.sim)
-        # print(self.states['cube1_pos'])
 
         # Refresh states
         self._update_states()
-
-        # print(self.states['cube1_pos'])
 
     def compute_observations(self):
         self._refresh()
@@ -545,6 +533,7 @@ class FrankaPushing(VecTask):
         return self.obs_buf
     
     def _compute_pixel_obs_save(self):
+        """Save images for debugging"""
         img = []
         self.gym.render_all_camera_sensors(self.sim)
         self.gym.start_access_image_tensors(self.sim)
@@ -552,8 +541,6 @@ class FrankaPushing(VecTask):
             crop_l = (self.cam_w - self.im_size) // 2
             crop_r = crop_l + self.im_size
             img.append(self.cam_tensors[i][:, crop_l:crop_r, :3].cpu().numpy())
-            # self.pix_buf[i] = self.cam_tensors[i][:, crop_l:crop_r, :3].permute(2, 0, 1).float() / 255.
-            # self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
         self.gym.end_access_image_tensors(self.sim)
 
         # save images
@@ -657,35 +644,26 @@ class FrankaPushing(VecTask):
 
     def freeze_cubes(self):
         # TODO this doesn't work with self.test_task
-        # TODO mass is not reset
         if self.test:
             # Freeze
-            for t, task in enumerate(self.tasks):
-                if task.get('rigid', False):
-                    for id in self._cube_ids[1:]:
-                        # Set mass x100
-                        properties = self.gym.get_actor_rigid_body_properties(self.envs[t], id)[0]
-                        if self.cube_masses[t] is None: self.cube_masses[t] = properties.mass
-                        properties.mass = self.cube_masses[t] * 100
-                        self.gym.set_actor_rigid_body_properties(self.envs[t], id, [properties], True)
-
-                        # Set color to gray
-                        num_bodies = self.gym.get_actor_rigid_body_count(self.envs[t], id)
-                        for n in range(num_bodies):
-                            self.gym.set_rigid_body_color(self.envs[t], id, n, gymapi.MESH_VISUAL, gymapi.Vec3(0.5, 0.5, 0.5))
+            cube_colors = [gymapi.Vec3(0.5, 0.5, 0.5) for _ in range(len(self._cube_ids) - 1)]
+            mass_multiplier = 100
         else:
             # Restore
-            for t, task in enumerate(self.tasks):
-                if task.get('rigid', False):
-                    for i, id in enumerate(self._cube_ids[1:], 1):
-                        properties = self.gym.get_actor_rigid_body_properties(self.envs[t], id)[0]
-                        if self.cube_masses[t] is None: self.cube_masses[t] = properties.mass
-                        properties.mass = self.cube_masses[t]
-                        self.gym.set_actor_rigid_body_properties(self.envs[t], id, [properties], True)
+            cube_colors = self.cube_colors[1:]
+            mass_multiplier = 1
+        
+        for t, task in enumerate(self.tasks):
+            if task.get('rigid', False):
+                for i, id in enumerate(self._cube_ids[1:]):
+                    properties = self.gym.get_actor_rigid_body_properties(self.envs[t], id)[0]
+                    if self.cube_masses[t] is None: self.cube_masses[t] = properties.mass
+                    properties.mass = self.cube_masses[t] * mass_multiplier
+                    self.gym.set_actor_rigid_body_properties(self.envs[t], id, [properties], True)
 
-                        num_bodies = self.gym.get_actor_rigid_body_count(self.envs[t], id)
-                        for n in range(num_bodies):
-                            self.gym.set_rigid_body_color(self.envs[t], id, n, gymapi.MESH_VISUAL, self.cube_colors[i])
+                    num_bodies = self.gym.get_actor_rigid_body_count(self.envs[t], id)
+                    for n in range(num_bodies):
+                        self.gym.set_rigid_body_color(self.envs[t], id, n, gymapi.MESH_VISUAL, cube_colors[i])
 
 
     def _reset_init_cube_state(self, cube, env_ids, check_valid=True):
@@ -932,7 +910,6 @@ class FrankaPushing(VecTask):
         self.done = self.reset_buf.clone()
         
         # Produce observation
-        # breakpoint()
         self.compute_observations()
         self.rew_buf[:] = self.compute_franka_reward(self.states)
 
@@ -942,8 +919,6 @@ class FrankaPushing(VecTask):
         if self._override_render_default:
             self.override_render = True
         if self.render_this_step():
-            # breakpoint()
-            # self._compute_pixel_obs_save()
             self.compute_pixel_obs()
             self.extras["images"] = self.pix_buf
         metrics = dict()
@@ -965,9 +940,6 @@ class FrankaPushing(VecTask):
         # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
-            # There is something funny going on here. This reset doesn't actually apply until the next iteration. 
-            # Even more interestingly, compute_observations overrides the values back with what it was before the reset.
-            # However, the next iteration does have the correct values nonetheless. They must be somehow internally cached.
             self.reset_idx(env_ids)
         # debug viz
         # if self.viewer and self.debug_viz:
