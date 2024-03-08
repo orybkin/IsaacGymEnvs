@@ -276,9 +276,9 @@ class VecTask(Env):
         self.obs_dict = {}
 
     def render_this_step(self):
-        return self.override_render
-        # episode_n = self.control_steps // self.max_episode_length 
-        # return episode_n % self.render_every_episodes == 0 and self.enable_camera_sensors
+        # return self.override_render
+        episode_n = self.control_steps // self.max_episode_length 
+        return episode_n % self.render_every_episodes == 0 and self.enable_camera_sensors
 
     def set_viewer(self):
         """Create the viewer."""
