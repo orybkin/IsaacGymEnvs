@@ -831,17 +831,17 @@ class FrankaPushing(VecTask):
         if self.test:
             sampled_goal_state[:, 0] = center[0] + 0.11
             sampled_goal_state[:, 1] = center[1] - 0.11
-            sampled_goal_state[:, 2] = center[2] 
+            sampled_goal_state[:, 2] = center[2]
             for t in range(min(len(self.tasks), sampled_goal_state.shape[0])):
                 if len(self.tasks[t]) > self.n_cubes:
                     for i in range(3):
-                        sampled_goal_state[t, i] = center[i] + self.tasks[t]['goal'][i]
+                        sampled_goal_state[t, i] = center[i] + self.tasks[t]['cubes'][self.n_cubes][i]
 
         # Test specific task
         if self.test_task >=0 and self.test:
             if 'goal' in self.tasks[self.test_task]:
                 for i in range(3):
-                    sampled_goal_state[:, i] = center[i] + self.tasks[self.test_task]['goal'][i]
+                    sampled_goal_state[:, i] = center[i] + self.tasks[self.test_task]['cubes'][self.n_cubes][i]
 
         # Lastly, set these sampled values as the new init state
         self._goal_state[env_ids, :] = sampled_goal_state
