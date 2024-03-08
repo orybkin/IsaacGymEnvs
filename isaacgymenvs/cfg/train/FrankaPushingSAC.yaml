@@ -34,6 +34,7 @@ params:
     reward_shaper:
       scale_value: 1.0
     max_frames: 1_000_000_000
+    mixed_precision: False
 
     num_steps_per_episode: 1
     gradient_steps: 1
@@ -66,6 +67,5 @@ params:
     num_actors: ${....task.env.numEnvs}
 
     # use_diagnostics: True
-    # mixed_precision: False
     # score_to_win: 10000
     # max_epochs: ${resolve_default:50000,${....max_iterations}}

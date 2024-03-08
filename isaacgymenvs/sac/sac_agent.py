@@ -51,6 +51,7 @@ class SACAgent(BaseAlgorithm):
         self.reset_every_steps = check_for_none(config.get('reset_every_steps', None))
         self.validation_ratio = config.get('validation_ratio', 0.0)
         self.policy_update_fraction = config.get('policy_update_fraction', 1)
+        self.mixed_precision = config.get('mixed_precision', False)
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -300,24 +301,25 @@ class SACAgent(BaseAlgorithm):
         self.model.train()
 
     def update_critic(self, obs, action, reward, next_obs, not_done):
-        with torch.no_grad():
-            dist = self.model.actor(next_obs)
-            next_action = dist.rsample()
-            log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+            with torch.no_grad():
+                dist = self.model.actor(next_obs)
+                next_action = dist.rsample()
+                log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
 
-            next_action = next_action * self.action_scale
-            target_Q1, target_Q2 = self.model.critic_target(next_obs, next_action)
-            target_V = torch.min(target_Q1, target_Q2) 
-            # target_V = torch.min(target_Q1, target_Q2) - self.alpha * log_prob
+                next_action = next_action * self.action_scale
+                target_Q1, target_Q2 = self.model.critic_target(next_obs, next_action)
+                target_V = torch.min(target_Q1, target_Q2) 
+                # target_V = torch.min(target_Q1, target_Q2) - self.alpha * log_prob
 
-            target_Q = reward + (not_done * self.gamma * target_V)
-            target_Q = target_Q.detach()
+                target_Q = reward + (not_done * self.gamma * target_V)
+                target_Q = target_Q.detach()
 
-        # get current Q estimates
-        current_Q1, current_Q2 = self.model.critic(obs, action)
+            # get current Q estimates
+            current_Q1, current_Q2 = self.model.critic(obs, action)
 
-        critic1_loss = nn.MSELoss()(current_Q1, target_Q)
-        critic2_loss = nn.MSELoss()(current_Q2, target_Q)
+            critic1_loss = nn.MSELoss()(current_Q1, target_Q)
+            critic2_loss = nn.MSELoss()(current_Q2, target_Q)
         critic_loss = critic1_loss + critic2_loss 
 
         info = {'losses/c_loss': critic_loss.detach(),
@@ -338,16 +340,17 @@ class SACAgent(BaseAlgorithm):
         for p in self.model.sac_network.critic.parameters():
             p.requires_grad = False
 
-        dist = self.model.actor(obs)
-        action = dist.rsample()
-        log_prob = dist.log_prob(action).sum(-1, keepdim=True)
-        entropy = -log_prob.mean() #dist.entropy().sum(-1, keepdim=True).mean()
-        action = action * self.action_scale
-        actor_Q1, actor_Q2 = self.model.critic(obs, action)
-        # actor_Q = (actor_Q1 + actor_Q2) / 2
-        actor_Q = torch.min(actor_Q1, actor_Q2)
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+            dist = self.model.actor(obs)
+            action = dist.rsample()
+            log_prob = dist.log_prob(action).sum(-1, keepdim=True)
+            entropy = -log_prob.mean() #dist.entropy().sum(-1, keepdim=True).mean()
+            action = action * self.action_scale
+            actor_Q1, actor_Q2 = self.model.critic(obs, action)
+            # actor_Q = (actor_Q1 + actor_Q2) / 2
+            actor_Q = torch.min(actor_Q1, actor_Q2)
 
-        actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
+            actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
         actor_loss = actor_loss.mean()
 
         for p in self.model.sac_network.critic.parameters():
