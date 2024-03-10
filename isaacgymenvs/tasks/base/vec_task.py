@@ -276,7 +276,7 @@ class VecTask(Env):
         self.obs_dict = {}
 
     def render_this_step(self):
-        if self._do_override_render and self.override_render:
+        if self.override_render:
             return True
         else:
             episode_n = self.control_steps // self.max_episode_length 

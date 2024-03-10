@@ -1467,8 +1467,10 @@ class ContinuousA2CBase(A2CBase):
         rep_count = 0
         self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
+        self.vec_env.env.start_epoch_num = self.epoch_num
         test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
-        render_check = Every(self.vec_env.env.render_every_episodes * self.vec_env.env.max_episode_length)
+        test_render_check = Every(math.ceil(self.vec_env.env.render_every_episodes / self.test_every_episodes))
+        test_counter = 0
 
         if self.multi_gpu:
             print("====================broadcasting parameters")
@@ -1582,6 +1584,7 @@ class ContinuousA2CBase(A2CBase):
             iteration = self.frame / self.num_actors
             if test_check.check(iteration):
                 print("Testing...")
-                self.test(render=render_check.check(iteration))
+                test_counter += 1
+                self.test(render=test_render_check.check(test_counter))
                 self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')
                 print("Done Testing.")
