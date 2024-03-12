@@ -100,6 +100,7 @@ class FrankaPushing(VecTask):
         self.test_task = self.cfg["env"].get("testTask", -1)
         self.rigid_cubes = self.cfg["env"].get("rigidCubes", False)
         self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
+        self.friction = self.cfg["env"].get("friction", 1)
 
         self.target_idx = [14,15,16]
         self.target_name = 'cube0_pos'
@@ -194,6 +195,8 @@ class FrankaPushing(VecTask):
     def _create_ground_plane(self):
         plane_params = gymapi.PlaneParams()
         plane_params.normal = gymapi.Vec3(0.0, 0.0, 1.0)
+        plane_params.dynamic_friction = self.friction
+        plane_params.static_friction = self.friction
         self.gym.add_ground(self.sim, plane_params)
 
     def _create_envs(self, num_envs, spacing, num_per_row):
@@ -395,6 +398,10 @@ class FrankaPushing(VecTask):
                 self._cube_ids[j] = self.gym.create_actor(env_ptr, cube_assets[j], cube_start_poses[j], f"cube{j}", i, 0, 0)
                 # set colors
                 self.gym.set_rigid_body_color(env_ptr, self._cube_ids[j], 0, gymapi.MESH_VISUAL, cube_colors[j])
+                # Set friction
+                cube_props = gymapi.RigidShapeProperties()
+                cube_props.friction = self.friction
+                self.gym.set_actor_rigid_shape_properties(env_ptr, self._cube_ids[j], [cube_props])
 
             # Set up camera
             if self.enable_camera_sensors and i < self.max_pix:
