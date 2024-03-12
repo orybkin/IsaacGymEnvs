@@ -21,6 +21,7 @@ class NetworkBuilder:
                                               lambda **kwargs: network_builder.A2CResnetBuilder())
         self.network_factory.register_builder('rnd_curiosity', lambda **kwargs: network_builder.RNDCuriosityBuilder())
         self.network_factory.register_builder('soft_actor_critic', lambda **kwargs: network_builder.SACBuilder())
+        self.network_factory.register_builder('redq', lambda **kwargs: network_builder.REDQSacBuilder())
 
     def load(self, params):
         network_name = params['name']
