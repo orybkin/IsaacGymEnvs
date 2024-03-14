@@ -95,7 +95,7 @@ try:
             # print(envs.gym.get_camera_transform())
             # t = envs.gym.get_viewer_camera_transform(envs.viewer, envs.envs[0])
             # print(t.p, t.r)
-            obs, reward, done, info = envs.step(action[None])
+            obs, reward, terminated, truncated, info = envs.step(action[None])
 except KeyboardInterrupt:
     print("Keyboard interrupt, shutting down.\n")
 
