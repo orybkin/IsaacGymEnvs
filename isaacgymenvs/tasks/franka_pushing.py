@@ -178,6 +178,7 @@ class FrankaPushing(VecTask):
 
         # Refresh tensors
         self._refresh()
+                
 
     def create_sim(self):
         self.sim_params.up_axis = gymapi.UP_AXIS_Z
@@ -188,6 +189,7 @@ class FrankaPushing(VecTask):
             self.device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
         self._create_ground_plane()
         self._create_envs(self.num_envs, self.cfg["env"]['envSpacing'], int(np.sqrt(self.num_envs)))
+        self.define_tasks()
 
     def _create_ground_plane(self):
         plane_params = gymapi.PlaneParams()
@@ -253,15 +255,12 @@ class FrankaPushing(VecTask):
 
         # Create cubeA asset
         cube_assets = []
-        cube_colors = []
+        self.cube_colors = cube_colors = []
         cube_options = gymapi.AssetOptions()
         cube_options.density = 1000
         for j in range(self.n_cubes):
             cube_assets += [self.gym.create_box(self.sim, *([self.cube_sizes[j]] * 3), cube_options)]
             cube_colors += [gymapi.Vec3(0.0, np.random.rand(), np.random.rand())]
-            if self.rigid_cubes:
-                cube_options.fix_base_link = True
-                cube_colors[-1] = gymapi.Vec3(0.5, 0.5, 0.5)
         cube_colors[0] = gymapi.Vec3(0.6, 0.1, 0.0)
 
         self.num_franka_bodies = self.gym.get_asset_rigid_body_count(franka_asset)
@@ -532,6 +531,25 @@ class FrankaPushing(VecTask):
         maxs = {ob: torch.max(self.states[ob]).item() for ob in obs}
 
         return self.obs_buf
+    
+    def _compute_pixel_obs_save(self):
+        """Save images for debugging"""
+        img = []
+        self.gym.render_all_camera_sensors(self.sim)
+        self.gym.start_access_image_tensors(self.sim)
+        for i in range(min(self.num_envs, self.max_pix)):
+            crop_l = (self.cam_w - self.im_size) // 2
+            crop_r = crop_l + self.im_size
+            img.append(self.cam_tensors[i][:, crop_l:crop_r, :3].cpu().numpy())
+        self.gym.end_access_image_tensors(self.sim)
+
+        # save images
+        import imageio
+        img = np.array(img)
+        assert img.shape == (16, self.im_size, self.im_size, 3)
+        img = img.reshape(4, 4, self.im_size, self.im_size, 3)
+        img = img.transpose(0, 2, 1, 3, 4).reshape(4*self.im_size, 4*self.im_size, 3)
+        imageio.imwrite("render.png", img)
 
     def compute_pixel_obs(self):
         self.gym.render_all_camera_sensors(self.sim)
@@ -549,8 +567,9 @@ class FrankaPushing(VecTask):
             Observation dictionary, indices of environments being reset
         """
         env_ids = torch.arange(self.num_envs, device=self.device)
+        self.freeze_cubes()
+        self.gym.simulate(self.sim)
         self.reset_idx(env_ids)
-        self.progress_buf += 1
 
         self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
 
@@ -623,6 +642,30 @@ class FrankaPushing(VecTask):
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
 
+    def freeze_cubes(self):
+        # TODO this doesn't work with self.test_task
+        if self.test:
+            # Freeze
+            cube_colors = [gymapi.Vec3(0.5, 0.5, 0.5) for _ in range(len(self._cube_ids) - 1)]
+            mass_multiplier = 100
+        else:
+            # Restore
+            cube_colors = self.cube_colors[1:]
+            mass_multiplier = 1
+        
+        for t, task in enumerate(self.tasks):
+            if task.get('rigid', False):
+                for i, id in enumerate(self._cube_ids[1:]):
+                    properties = self.gym.get_actor_rigid_body_properties(self.envs[t], id)[0]
+                    if self.cube_masses[t] is None: self.cube_masses[t] = properties.mass
+                    properties.mass = self.cube_masses[t] * mass_multiplier
+                    self.gym.set_actor_rigid_body_properties(self.envs[t], id, [properties], True)
+
+                    num_bodies = self.gym.get_actor_rigid_body_count(self.envs[t], id)
+                    for n in range(num_bodies):
+                        self.gym.set_rigid_body_color(self.envs[t], id, n, gymapi.MESH_VISUAL, cube_colors[i])
+
+
     def _reset_init_cube_state(self, cube, env_ids, check_valid=True):
         """
         Simple method to sample @cube's position based on self.startPositionNoise and self.startRotationNoise, and
@@ -694,7 +737,29 @@ class FrankaPushing(VecTask):
                                               2.0 * self.start_position_noise * (
                                                       torch.rand(num_resets, 3, device=self.device) - 0.5)
     
-        self.tasks = tasks = [] 
+        if self.test:
+            for t in range(min(len(self.tasks), sampled_cube_state.shape[0])):
+                for i in range(3):
+                    sampled_cube_state[t, i] = table_center[i] + self.tasks[t]['cubes'][cube][i]
+
+        # Test specific task
+        if self.test_task >=0 and self.test:
+            for i in range(3):
+                sampled_cube_state[:, i] = table_center[i] + self.tasks[self.test_task]['cubes'][cube][i]
+
+        # Sample rotation value
+        if not self.test and self.start_rotation_noise > 0:
+            aa_rot = torch.zeros(num_resets, 3, device=self.device)
+            aa_rot[:, 2] = 2.0 * self.start_rotation_noise * (torch.rand(num_resets, device=self.device) - 0.5)
+            sampled_cube_state[:, 3:7] = quat_mul(axisangle2quat(aa_rot), sampled_cube_state[:, 3:7])
+
+        # Lastly, set these sampled values as the new init state
+        this_cube_state_all[env_ids, :] = sampled_cube_state
+
+
+    def define_tasks(self):
+        n_tasks = 16
+        self.tasks = tasks = [None] * n_tasks 
         height = -0.115 # height at ground (1.06)
         center = np.array([.0, .0, height])
         left = np.array([.0, -.08, height])
@@ -707,41 +772,31 @@ class FrankaPushing(VecTask):
         top_left = np.array([-.08, -.08, height])
         off = np.array([0.3, 0.3, height])
 
-        tasks.append([top_left, off, off, off, off, off]) # push
-        tasks.append([top_left, left, off, off, off, off]) # 1 cube blocking way
-        tasks.append([top_left, left, center, off, off, off]) # 2 cubes blocking way
-        tasks.append([top_left, left, center, right, off, off]) # 3 cubes blocking way
-        tasks.append([top_left, bottom_left, off, off, off, off]) # 1 cube at the goal
-        tasks.append([top_left, top, center, left, bottom, right]) # star
-        tasks.append([top_left, bottom_right, left, bottom_left, bottom, center]) # 6 cubes blocking way
-        tasks.append([top_left, left, bottom_left, [-0.08, -0.08, 0.0], bottom, center]) # star + cube on top
-        tasks.append([[-0.08, -0.08, 0.0], left, bottom_left, top_left, bottom, center]) # star + red is on top
-        tasks.append([[.03, -.11, height], [.03, -.04, height], [-.05, -.11, height], off, off, off]) # tool use
-        tasks.append([top_left, [.04, -.11, height], [.11, -.04, height], off, off, off]) # insertion
-        tasks.append([center, [.07, -.11, height], [-.07, -.11, height], [.07, -.11, -0.045], [-.07, -.11, -0.045], [.0, -.11, -0.045], [.0, -.11, 0]]) # insertion 2
-        tasks.append([center, [-.11, .07, height], [-.11, -.07, height], [-.11, .07, -0.045], [-.11, -.07, -0.045], [-.11, .0, -0.045], [-.11, .0, 0]]) # insertion 3
-        tasks.append([center, [.07, -.11, height], [-.07, -.11, height], off, off, off, [.0, -.11, 0]]) # insertion 4
-        tolerance = 0.005; tasks.append([center, [.07 + tolerance, -.11, height], [-.07 - tolerance, -.11, height], off, off, off, [.0, -.11, 0]]) # tolerance
-        tolerance = 0.01; tasks.append([center, [.07 + tolerance, -.11, height], [-.07 - tolerance, -.11, height], off, off, off, [.0, -.11, 0]]) # tolerance
-
-        if self.test:
-            for t in range(min(len(tasks), sampled_cube_state.shape[0])):
-                for i in range(3):
-                    sampled_cube_state[t, i] = table_center[i] + tasks[t][cube][i]
-
-        # Test specific task
-        if self.test_task >=0 and self.test:
-            for i in range(3):
-                sampled_cube_state[:, i] = table_center[i] + tasks[self.test_task][cube][i]
-
-        # Sample rotation value
-        if not self.test and self.start_rotation_noise > 0:
-            aa_rot = torch.zeros(num_resets, 3, device=self.device)
-            aa_rot[:, 2] = 2.0 * self.start_rotation_noise * (torch.rand(num_resets, device=self.device) - 0.5)
-            sampled_cube_state[:, 3:7] = quat_mul(axisangle2quat(aa_rot), sampled_cube_state[:, 3:7])
-
-        # Lastly, set these sampled values as the new init state
-        this_cube_state_all[env_ids, :] = sampled_cube_state
+        tasks[0]  = dict(cubes=[top_left, off, off, off, off, off],                                             name='push')
+        tasks[1]  = dict(cubes=[top_left, left, off, off, off, off], rigid=True,                                name='1 cube blocking way')
+        tasks[2]  = dict(cubes=[top_left, left, center, off, off, off],                                         name='2 cubes blocking way')
+        tasks[3]  = dict(cubes=[top_left, left, center, right, off, off],                                       name='3 cubes blocking way')
+        tasks[4]  = dict(cubes=[top_left, bottom_left, off, off, off, off],                                     name='1 cube at the goal')
+        tasks[5]  = dict(cubes=[top_left, top, center, left, bottom, right],                                    name='star')
+        tasks[6]  = dict(cubes=[top_left, bottom_right, left, bottom_left, bottom, center],                     name='6 cubes blocking way')
+        tasks[7]  = dict(cubes=[top_left, left, bottom_left, [-0.08, -0.08, 0.0], bottom, center],              name='star + cube on top')
+        tasks[8]  = dict(cubes=[[-0.08, -0.08, 0.0], left, bottom_left, top_left, bottom, center],              name='star + red is on top')
+        tasks[9]  = dict(cubes=[[.03, -.11, height], [.03, -.04, height], [-.05, -.11, height], off, off, off], name='tool use')
+        tasks[10] = dict(cubes=[top_left, [.04, -.11, height], [.11, -.04, height], off, off, off], rigid=True, name='insertion')
+        tasks[11] = dict(cubes=[center, [.07, -.11, height], [-.07, -.11, height], [.07, -.11, -0.045], [-.07, -.11, -0.045], [.0, -.11, -0.045]], 
+                         goal=[.0, -.11, 0], rigid=True, name='insertion 2')
+        tasks[12] = dict(cubes=[center, [-.11, .07, height], [-.11, -.07, height], [-.11, .07, -0.045], [-.11, -.07, -0.045], [-.11, .0, -0.045]], 
+                         goal=[-.11, .0, 0], rigid=True, name='insertion 3')
+        tasks[13] = dict(cubes=[center, [.07, -.11, height], [-.07, -.11, height], off, off, off], 
+                         goal=[.0, -.11, 0], rigid=True, name='insertion 4')
+        tolerance = 0.005; 
+        tasks[14] = dict(cubes=[center, [.07 + tolerance, -.11, height], [-.07 - tolerance, -.11, height], off, off, off], 
+                         goal=[.0, -.11, 0], rigid=True, name='tolerance')
+        tolerance = 0.01; 
+        tasks[15] = dict(cubes=[center, [.07 + tolerance, -.11, height], [-.07 - tolerance, -.11, height], off, off, off], 
+                         goal=[.0, -.11, 0], rigid=True, name='tolerance')
+        
+        self.cube_masses = [None] * n_tasks
 
 
     def _reset_goal_state(self, env_ids):
@@ -777,16 +832,16 @@ class FrankaPushing(VecTask):
             sampled_goal_state[:, 0] = center[0] + 0.11
             sampled_goal_state[:, 1] = center[1] - 0.11
             sampled_goal_state[:, 2] = center[2] 
-            for t in range(min(len(self.tasks), sampled_goal_state.shape[0])):
-                if len(self.tasks[t]) > self.n_cubes:
+            for t in range(len(self.tasks)):
+                if 'goal' in self.tasks[t]:
                     for i in range(3):
-                        sampled_goal_state[t, i] = center[i] + self.tasks[t][self.n_cubes][i]
+                        sampled_goal_state[t, i] = center[i] + self.tasks[t]['goal'][i]
 
         # Test specific task
         if self.test_task >=0 and self.test:
-            if len(self.tasks[self.test_task]) > self.n_cubes:
+            if 'goal' in self.tasks[self.test_task]:
                     for i in range(3):
-                        sampled_goal_state[:, i] = center[i] + self.tasks[self.test_task][self.n_cubes][i]
+                        sampled_goal_state[:, i] = center[i] + self.tasks[self.test_task]['goal'][i]
 
         # Lastly, set these sampled values as the new init state
         self._goal_state[env_ids, :] = sampled_goal_state
@@ -853,15 +908,7 @@ class FrankaPushing(VecTask):
         self.progress_buf += 1
         self.reset_buf[:] = torch.where((self.progress_buf >= self.max_episode_length), torch.ones_like(self.reset_buf), self.reset_buf)
         self.done = self.reset_buf.clone()
-
-        # Reset if needed
-        env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
-        if len(env_ids) > 0:
-            # There is something funny going on here. This reset doesn't actually apply until the next iteration. 
-            # Even more interestingly, compute_observations overrides the values back with what it was before the reset.
-            # However, the next iteration does have the correct values nonetheless. They must be somehow internally cached.
-            self.reset_idx(env_ids)
-
+        
         # Produce observation
         self.compute_observations()
         self.rew_buf[:] = self.compute_franka_reward(self.states)
@@ -869,7 +916,8 @@ class FrankaPushing(VecTask):
         # Extra logging
         if 'images' in self.extras:
             self.extras.pop("images")
-        # self.override_render = True
+        if self._do_override_render:
+            self.override_render = True
         if self.render_this_step():
             self.compute_pixel_obs()
             self.extras["images"] = self.pix_buf
@@ -888,7 +936,11 @@ class FrankaPushing(VecTask):
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeB_vel"] = torch.norm(self.states["cubeB_vel"], dim=-1)
-
+        
+        # Reset if needed
+        env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
+        if len(env_ids) > 0:
+            self.reset_idx(env_ids)
         # debug viz
         # if self.viewer and self.debug_viz:
         #     self.gym.clear_lines(self.viewer)

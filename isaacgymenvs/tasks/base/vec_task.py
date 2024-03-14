@@ -116,6 +116,7 @@ class Env(ABC):
         self.clip_actions = config["env"].get("clipActions", np.Inf)
 
         self.render_every_episodes = config["env"].get("renderEveryEpisodes", 1)
+        self._do_override_render = config["env"].get("overrideRender", False)
         self.override_render = False
 
         # Total number of training frames since the beginning of the experiment.
@@ -275,9 +276,11 @@ class VecTask(Env):
         self.obs_dict = {}
 
     def render_this_step(self):
-        return self.override_render
-        # episode_n = self.control_steps // self.max_episode_length 
-        # return episode_n % self.render_every_episodes == 0 and self.enable_camera_sensors
+        if self.override_render:
+            return True
+        else:
+            episode_n = self.control_steps // self.max_episode_length 
+            return episode_n % self.render_every_episodes == 0 and self.enable_camera_sensors
 
     def set_viewer(self):
         """Create the viewer."""
@@ -382,7 +385,7 @@ class VecTask(Env):
             Observations, rewards, resets, info
             Observations are dict of observations (currently only one member called 'obs')
         """
-
+        
         # randomize actions
         if self.dr_randomizations.get('actions', None):
             actions = self.dr_randomizations['actions']['noise_lambda'](actions)
@@ -394,10 +397,9 @@ class VecTask(Env):
 
         # step physics and render each frame
         for i in range(self.control_freq_inv):
+            self.gym.simulate(self.sim)
             if self.force_render:
                 self.render()
-            self.gym.simulate(self.sim)
-
         # to fix!
         if self.device == 'cpu':
             self.gym.fetch_results(self.sim, True)
@@ -531,6 +533,8 @@ class VecTask(Env):
                 return np.array(img)
         elif self.render_this_step():
             self.gym.fetch_results(self.sim, True)
+            self._refresh()
+            # self.gym.refresh_rigid_body_state_tensor(self.sim)
             self.gym.step_graphics(self.sim)
 
     def __parse_sim_params(self, physics_engine: str, config_sim: Dict[str, Any]) -> gymapi.SimParams:

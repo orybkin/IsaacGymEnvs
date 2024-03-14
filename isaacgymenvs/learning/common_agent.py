@@ -151,7 +151,7 @@ class CommonAgent(a2c_continuous.A2CAgent):
                 self.writer.add_scalar('info/epochs', epoch_num, frame)
                 self._log_train_info(train_info, frame)
 
-                self.algo_observer.after_print_stats(frame, epoch_num, total_time)
+                self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_train')
                 
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()

@@ -142,9 +142,10 @@ def launch_rlg_hydra(cfg: DictConfig):
         )
         if cfg.capture_video:
             envs.is_vector_env = True
+            os.makedirs(f"runs/{run_name}/viz", exist_ok=True)
             envs = gym.wrappers.RecordVideo(
                 envs,
-                f"videos/{run_name}",
+                f"runs/{run_name}/viz",
                 step_trigger=lambda step: step % cfg.capture_video_freq == 0,
                 video_length=cfg.capture_video_len,
             )
@@ -175,7 +176,7 @@ def launch_rlg_hydra(cfg: DictConfig):
     rlg_config_dict = omegaconf_to_dict(cfg.train)
     rlg_config_dict = preprocess_train_config(cfg, rlg_config_dict)
 
-    observers = [RLGPUAlgoObserver()]
+    observers = [RLGPUAlgoObserver(rlg_config_dict["params"]["config"]["full_experiment_name"])]
 
     if cfg.pbt.enabled:
         pbt_observer = PbtAlgoObserver(cfg)
@@ -206,8 +207,9 @@ def launch_rlg_hydra(cfg: DictConfig):
 
     # dump config dict
     if not cfg.test:
-        experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
-        '_{date:%d-%H-%M-%S-%f}'.format(date=datetime.now()))
+        # experiment_dir = os.path.join('runs', cfg.train.params.config.name + 
+        # '_{date:%d-%H-%M-%S-%f}'.format(date=datetime.now()))
+        experiment_dir = f"runs/{run_name}"
 
         os.makedirs(experiment_dir, exist_ok=True)
         with open(os.path.join(experiment_dir, 'config.yaml'), 'w') as f:
