@@ -39,3 +39,5 @@ isaacgymenvs/build-temp-*
 *events.out.tfevents.*
 isaacgymenvs/pabrtxl1
 isaacgymenvs/rsync.exp
+isaacgymenvs/taskmaster5.def
+isaacgymenvs/run_*.sh
