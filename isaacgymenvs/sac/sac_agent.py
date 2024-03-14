@@ -2,11 +2,11 @@ from rl_games.algos_torch import torch_ext
 
 from rl_games.common import vecenv
 from rl_games.common import schedulers
-from rl_games.common import experience
 from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
 from isaacgymenvs.ppo.torch_ext import explained_variance
 from isaacgymenvs.sac import her_replay_buffer
+from isaacgymenvs.sac import experience
 from isaacgymenvs.sac import validation_replay_buffer
 from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm, save_cmd
 
@@ -74,7 +74,7 @@ class SACAgent(BaseAlgorithm):
         print("Number of Agents", self.num_actors, "Batch Size", self.batch_size)
         self.build_network()
 
-        if self.relabel_ratio > 0.0 or self.relabel_ratio_random > 0.0:
+        if self.relabel_ratio > 0.0:
             self.replay_buffer = validation_replay_buffer.ValidationHERReplayBuffer(self.env_info['observation_space'].shape,
                                                             self.env_info['action_space'].shape,
                                                             self.replay_buffer_size,

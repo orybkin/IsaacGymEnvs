@@ -24,12 +24,13 @@ env:
 
   aggregateMode: 3
 
-  actionScale: 1.0
+  actionScale: 0.5
 
   easy: False
   distanceFromBlock: 0.0
   nCubes: 6
   startPositionNoise: 0.12
+  friction: 0.5
 
   rigidCubes: False
   testTask: -1

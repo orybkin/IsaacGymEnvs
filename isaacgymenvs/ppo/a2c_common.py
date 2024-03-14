@@ -554,7 +554,8 @@ class A2CBase(BaseAlgorithm):
 
     def env_step(self, actions):
         actions = self.preprocess_actions(actions)
-        obs, rewards, _, dones, infos = self.vec_env.step(actions)
+        obs, rewards, terminated, truncated, infos = self.vec_env.step(actions)
+        dones = terminated + truncated
 
         if self.is_tensor_obses:
             if self.value_size == 1:

@@ -930,15 +930,15 @@ class FrankaPushing(VecTask):
             self.extras["images"] = self.pix_buf
         metrics = dict()
         metrics["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)
-        metrics["success@4"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
-        metrics["success@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02
-        metrics["failure@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) > 0.02
+        metrics["success_4"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
+        metrics["success_2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02
+        metrics["failure_2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) > 0.02
         if self.test:
             for i in range(min(self.max_pix, self.states['goal_pos'].shape[0])):
                 metrics[f"goal_dist_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i]
-                metrics[f"success@4_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.04
-                metrics[f"success@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.02
-                metrics[f"failure@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] > 0.02
+                metrics[f"success_4_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.04
+                metrics[f"success_2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.02
+                metrics[f"failure_2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] > 0.02
         self.extras["episodic"] = metrics
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
