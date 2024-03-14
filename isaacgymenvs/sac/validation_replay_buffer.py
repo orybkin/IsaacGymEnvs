@@ -34,11 +34,12 @@ class ValidationHERReplayBuffer(HERReplayBuffer):
         self.val_envs = int(n_envs * validation_ratio)
         self.train_envs = n_envs - self.val_envs
         assert capacity == self.n_steps * n_envs
+        self.dtype = torch.float32
 
-        self.obses = torch.empty((n_steps, n_envs, *obs_shape), dtype=torch.float32, device=self.device)
-        self.next_obses = torch.empty((n_steps, n_envs, *obs_shape), dtype=torch.float32, device=self.device)
-        self.actions = torch.empty((n_steps, n_envs, *action_shape), dtype=torch.float32, device=self.device)
-        self.rewards = torch.empty((n_steps, n_envs, 1), dtype=torch.float32, device=self.device)
+        self.obses = torch.empty((n_steps, n_envs, *obs_shape), dtype=self.dtype, device=self.device)
+        self.next_obses = torch.empty((n_steps, n_envs, *obs_shape), dtype=self.dtype, device=self.device)
+        self.actions = torch.empty((n_steps, n_envs, *action_shape), dtype=self.dtype, device=self.device)
+        self.rewards = torch.empty((n_steps, n_envs, 1), dtype=self.dtype, device=self.device)
         self.dones = torch.empty((n_steps, n_envs, 1), dtype=torch.bool, device=self.device)
         self.steps_to_go = torch.empty((n_steps, n_envs), dtype=torch.int64, device=self.device)
         self.data = [self.obses, self.actions, self.rewards, self.next_obses, self.dones, self.steps_to_go]
@@ -64,6 +65,7 @@ class ValidationHERReplayBuffer(HERReplayBuffer):
     def add(self, obs, action, reward, next_obs, terminated, done):
         steps_to_go = torch.zeros_like(done)[:, 0]
         for x, y in zip(self.data, [obs, action, reward, next_obs, terminated, steps_to_go]):
+            if y.dtype == torch.float32: y = y.to(self.dtype)
             x[self.idx] = y
 
         # Get steps-to-go
@@ -113,6 +115,8 @@ class ValidationHERReplayBuffer(HERReplayBuffer):
         real_data = list(l.flatten(0,1)[real_idxs] for l in data)
         virtual_data = self.sample_virtual(data, virtual_idxs, n_envs)
         data = [torch.cat([real, virtual], dim=0) for real, virtual in zip(real_data, virtual_data)]
+        for i in range(4): data[i] = data[i].to(torch.float32)
+
         return data
     
     def sample_virtual(self, data, idxs, n_envs):
