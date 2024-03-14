@@ -917,13 +917,13 @@ class REDQCritic(NetworkBuilder.BaseNetwork):
     def __init__(self, num_Q, output_dim, **mlp_args):
         super().__init__()
         self.num_Q = num_Q        
-        self.q_net_list = []
+        self.q_net_list = nn.ModuleList([])
         for _ in range(num_Q):
             q_net = self._build_mlp(**mlp_args)
             q_net = nn.Sequential(*list(q_net.children()), nn.Linear(mlp_args['units'][-1], output_dim))
             self.q_net_list.append(q_net)
 
-    def forward(self, obs, q_net_idx):
+    def forward(self, obs, q_net_idx=None):
         def helper(i):
             return self.q_net_list[i](obs)
         if q_net_idx is None:
@@ -1073,7 +1073,7 @@ class REDQSacBuilder(NetworkBuilder):
             }
 
             critic_mlp_args = {
-                'input_size' : obs_dim + action_dim, 
+                'input_size' : obs_dim, 
                 'units' : self.units, 
                 'activation' : self.activation, 
                 'norm_func_name' : self.normalization,

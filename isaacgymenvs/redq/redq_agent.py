@@ -86,7 +86,7 @@ class REDQSacAgent(BaseAlgorithm):
                     'Hopper-v2':-1, 'HalfCheetah-v2':-3, 'Walker2d-v2':-3, 'Ant-v2':-4, 'Humanoid-v2':-2,
                     'Hopper-v3':-1, 'HalfCheetah-v3':-3, 'Walker2d-v3':-3, 'Ant-v3':-4, 'Humanoid-v3':-2,
                     'Hopper-v4':-1, 'HalfCheetah-v4':-3, 'Walker2d-v4':-3, 'Ant-v4':-4, 'Humanoid-v4':-2}
-                self.target_entropy = mbpo_target_entropy_dict.get(config.get("env_name"), )
+                self.target_entropy = mbpo_target_entropy_dict.get(config.get("env_name"), None)
         else:
             self.target_entropy = None
 
@@ -324,7 +324,7 @@ class REDQSacAgent(BaseAlgorithm):
     def set_train(self):
         self.model.train()
         
-    def get_probabilistic_num_min(num_mins):
+    def get_probabilistic_num_min(self, num_mins):
         # allows the number of min to be a float
         floored_num_mins = np.floor(num_mins)
         if num_mins - floored_num_mins > 0.001:
@@ -396,12 +396,11 @@ class REDQSacAgent(BaseAlgorithm):
         actor_loss.backward()
 
         # alpha loss
-        if self.auto_alpha:  # TODO add this
+        if self.auto_alpha:
             alpha_loss = -(self.log_alpha * (log_prob_a_tilda + self.target_entropy).detach()).mean()
-            self.alpha_optim.zero_grad()
+            self.log_alpha_optimizer.zero_grad()
             alpha_loss.backward()
-            self.alpha_optim.step()
-            self.alpha = self.log_alpha.cpu().exp().item()
+            self.log_alpha_optimizer.step()
         else:
             alpha_loss = torch.Tensor([0])
             
@@ -414,7 +413,7 @@ class REDQSacAgent(BaseAlgorithm):
             # 'info/actor_q': actor_Q.mean().detach(),
         }
         
-        #TODO: figure out what relabeling means
+        #TODO: figure out what relabeling means for redq
         
         # if self.relabel_ratio > 0:
         #     bs = actor_Q.shape[0]
@@ -433,12 +432,12 @@ class REDQSacAgent(BaseAlgorithm):
         obs, action, reward, next_obs, done = self.replay_buffer.sample(self.batch_size)
         critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
         actor_loss_info = {}
-        update_actor = step % self.policy_update_fraction == 0   #TODO: update this
-        if update_actor:
+        should_update_actor = step % self.policy_update_fraction == 0   #TODO: update this
+        if should_update_actor:
             actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
         for critic_optim in self.critic_optimizers:
             critic_optim.step()
-        if update_actor:
+        if should_update_actor:
             self.actor_optimizer.step()
 
         self.soft_update_params(self.model.sac_network.critic, self.model.sac_network.critic_target,
@@ -530,14 +529,11 @@ class REDQSacAgent(BaseAlgorithm):
 
     def act(self, obs, action_dim, sample=False):
         obs = self.preproc_obs(obs)
-        dist = self.model.sac_network.actor(obs)
-
-        actions = dist.sample() if sample else dist.mean
-        actions = actions * self.action_scale
-        actions = actions.clamp(*self.action_range)
-        assert actions.ndim == 2
-
-        return actions
+        action, _, _, _, _, _ = self.model.sac_network.actor(obs)
+        action = action * self.action_scale
+        action = action.clamp(*self.action_range)
+        assert action.ndim == 2
+        return action
 
     def clear_stats(self):
         self.game_rewards.clear()
@@ -629,9 +625,11 @@ class REDQSacAgent(BaseAlgorithm):
 
         return step_time, play_time, total_update_time, total_time, actor_metrics, critic_metrics
 
+    def _random_exploration(self):
+        return self.epoch_num < self.num_warmup_steps / self.num_steps_per_episode
+
     def train_epoch(self):
-        random_exploration = self.epoch_num < self.num_warmup_steps / self.num_steps_per_episode
-        return self.play_steps(random_exploration)
+        return self.play_steps(self._random_exploration())
 
     def train(self):
         self.init_tensors()
@@ -680,7 +678,7 @@ class REDQSacAgent(BaseAlgorithm):
 
                 self.writer.add_scalar('info/epochs', self.epoch_num, self.frame)
                 self.writer.add_scalar('info/updates', self.update_num, self.frame)
-                self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time)
+                self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time, '_train')
 
                 if self.validation_ratio > 0.0:
                     val_info = self.validate()
@@ -739,7 +737,7 @@ class REDQSacAgent(BaseAlgorithm):
                 
             # Test
             iteration = self.frame / self.num_actors
-            if test_check.check(iteration):
+            if test_check.check(iteration) and not self._random_exploration():
                 print("Testing...")
                 self.test(render=render_check.check(iteration))
                 self.algo_observer.after_print_stats(self.frame, self.epoch_num, total_time, '_test')
@@ -759,7 +757,7 @@ class REDQSacAgent(BaseAlgorithm):
         for n in range(self.vec_env.env.max_episode_length - 1):
             with torch.no_grad():
                 action = self.act(obs.float(), self.env_info["action_space"].shape, sample=True)
-
+                
             obs, rewards, terminated, truncated, infos = self.env_step(action)
             if isinstance(obs, dict):
                 obs = obs['obs']

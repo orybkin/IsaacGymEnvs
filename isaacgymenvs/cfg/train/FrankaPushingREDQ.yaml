@@ -61,10 +61,13 @@ params:
 
     num_seed_steps: 5
     num_warmup_steps: 5000
-    replay_buffer_size: 15998976
+    replay_buffer_size: 1000000
     num_actors: ${....task.env.numEnvs}
 
     policy_update_delay: 20
     num_Q: 2
     num_min: 2
     q_target_mode: min
+
+    auto_alpha: true
+    target_entropy: auto
