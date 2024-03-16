@@ -577,6 +577,7 @@ class FrankaPushing(VecTask):
         self.freeze_cubes()
         self.gym.simulate(self.sim)
         self.reset_idx(env_ids)
+        self.progress_buf += 1
 
         self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
 
