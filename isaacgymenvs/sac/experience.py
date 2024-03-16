@@ -212,11 +212,12 @@ class VectorizedReplayBuffer:
         """
 
         self.device = device
+        self.dtype = torch.float32
 
-        self.obses = torch.empty((capacity, *obs_shape), dtype=torch.float32, device=self.device)
-        self.next_obses = torch.empty((capacity, *obs_shape), dtype=torch.float32, device=self.device)
-        self.actions = torch.empty((capacity, *action_shape), dtype=torch.float32, device=self.device)
-        self.rewards = torch.empty((capacity, 1), dtype=torch.float32, device=self.device)
+        self.obses = torch.empty((capacity, *obs_shape), dtype=self.dtype, device=self.device)
+        self.next_obses = torch.empty((capacity, *obs_shape), dtype=self.dtype, device=self.device)
+        self.actions = torch.empty((capacity, *action_shape), dtype=self.dtype, device=self.device)
+        self.rewards = torch.empty((capacity, 1), dtype=self.dtype, device=self.device)
         self.dones = torch.empty((capacity, 1), dtype=torch.bool, device=self.device)
 
         self.capacity = capacity
@@ -228,6 +229,10 @@ class VectorizedReplayBuffer:
         return self.capacity if self.full else self.idx
 
     def add(self, obs, action, reward, next_obs, terminated, done):
+        obs = obs.to(self.dtype)
+        action = action.to(self.dtype)
+        reward = reward.to(self.dtype)
+        next_obs = next_obs.to(self.dtype)
 
         num_observations = obs.shape[0]
         remaining_capacity = min(self.capacity - self.idx, num_observations)
@@ -273,10 +278,10 @@ class VectorizedReplayBuffer:
         idxs = torch.randint(0,
                             self.capacity if self.full else self.idx, 
                             (batch_size,), device=self.device)
-        obses = self.obses[idxs]
-        actions = self.actions[idxs]
-        rewards = self.rewards[idxs]
-        next_obses = self.next_obses[idxs]
+        obses = self.obses[idxs].to(torch.float32)
+        actions = self.actions[idxs].to(torch.float32)
+        rewards = self.rewards[idxs].to(torch.float32)
+        next_obses = self.next_obses[idxs].to(torch.float32)
         dones = self.dones[idxs]
 
         return obses, actions, rewards, next_obses, dones
