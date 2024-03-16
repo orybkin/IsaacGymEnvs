@@ -207,7 +207,7 @@ class SACAgent(BaseAlgorithm):
         self.algo_observer = config['features']['observer']
         self.algo_observer.before_init(base_name, config, self.experiment_name)
         self.writer = SummaryWriter(self.summaries_dir)
-        print("Run Directory:", config['name'] + datetime.now().strftime("_%d-%H-%M-%S"))
+        print("Run Directory:", self.experiment_dir)
 
         self.is_tensor_obses = False
         self.is_rnn = False
@@ -664,13 +664,14 @@ class SACAgent(BaseAlgorithm):
                     self.writer.add_scalar('rewards/time', mean_rewards, total_time)
                     self.writer.add_scalar('episode_lengths/step', mean_lengths, self.frame)
                     self.writer.add_scalar('episode_lengths/time', mean_lengths, total_time)
-                    checkpoint_name = self.config['name'] + '_ep_' + str(self.epoch_num) + '_rew_' + str(mean_rewards)
+                    checkpoint_name = os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_frame_' + str(self.frame) \
+                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_'))
 
                     should_exit = False
 
                     if self.save_freq > 0:
                         if self.epoch_num % self.save_freq == 0:
-                            self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name))
+                            self.save(os.path.join(self.nn_dir, 'last_' + self.config['name']))
 
                     if mean_rewards > self.last_mean_rewards and self.epoch_num >= self.save_best_after:
                         print('saving next best rewards: ', mean_rewards)
@@ -678,7 +679,7 @@ class SACAgent(BaseAlgorithm):
                         self.save(os.path.join(self.nn_dir, self.config['name']))
                         if self.last_mean_rewards > self.config.get('score_to_win', float('inf')):
                             print('Maximum reward achieved. Network won!')
-                            self.save(os.path.join(self.nn_dir, checkpoint_name))
+                            self.save(checkpoint_name)
                             should_exit = True
 
                     if self.epoch_num >= self.max_epochs and self.max_epochs != -1:
@@ -686,8 +687,7 @@ class SACAgent(BaseAlgorithm):
                             print('WARNING: Max epochs reached before any env terminated at least once')
                             mean_rewards = -np.inf
 
-                        self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_ep_' + str(self.epoch_num) \
-                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                        self.save(checkpoint_name)
                         print('MAX EPOCHS NUM!')
                         should_exit = True
 
@@ -696,8 +696,7 @@ class SACAgent(BaseAlgorithm):
                             print('WARNING: Max frames reached before any env terminated at least once')
                             mean_rewards = -np.inf
 
-                        self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_frame_' + str(self.frame) \
-                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                        self.save(checkpoint_name)
                         print('MAX FRAMES NUM!')
                         should_exit = True
 

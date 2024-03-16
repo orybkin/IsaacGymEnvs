@@ -384,7 +384,7 @@ class A2CBase(BaseAlgorithm):
             network = builder.load(params['config']['central_value_config'])
             self.config['central_value_config']['network'] = network
 
-    def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames, phase):
+    def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames, phase=''):
         # do we need scaled time?
         self.diagnostics.send_info(self.writer)
         self.writer.add_scalar('performance/step_inference_rl_update_fps', curr_frames / scaled_time, frame)
@@ -1113,7 +1113,7 @@ class DiscreteA2CBase(A2CBase):
 
                 self.write_stats(total_time, epoch_num, step_time, play_time, update_time,
                                 a_losses, c_losses, entropies, kls, last_lr, lr_mul, frame, 
-                                scaled_time, scaled_play_time, curr_frames, '_train')
+                                scaled_time, scaled_play_time, curr_frames)
 
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()
@@ -1504,7 +1504,7 @@ class ContinuousA2CBase(A2CBase):
 
                 self.write_stats(total_time, epoch_num, step_time, play_time, update_time,
                                 metrics, last_lr, lr_mul, frame,
-                                scaled_time, scaled_play_time, curr_frames,'_train')
+                                scaled_time, scaled_play_time, curr_frames)
 
                 if self.has_soft_aug:
                     self.writer.add_scalar('losses/aug_loss', np.mean(aug_losses), frame)
