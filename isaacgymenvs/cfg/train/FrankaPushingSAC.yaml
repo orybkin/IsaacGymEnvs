@@ -36,6 +36,7 @@ params:
     max_frames: 10_000_000_000
     mixed_precision: False
     rb_precision: float32
+    fill_buffer_first: False
 
     num_steps_per_episode: 1
     gradient_steps: 8

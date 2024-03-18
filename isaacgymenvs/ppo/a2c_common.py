@@ -189,11 +189,12 @@ class A2CBase(BaseAlgorithm):
 
         self.is_adaptive_lr = config['lr_schedule'] == 'adaptive'
         self.schedule_type = config.get('schedule_type', 'legacy')
+        self.adaptive_lr_coef = config.get('adaptive_lr_coef', 1.5)
 
         # Setting learning rate scheduler
         if self.is_adaptive_lr:
             self.kl_threshold = config['kl_threshold']
-            self.scheduler = schedulers.AdaptiveScheduler(self.kl_threshold)
+            self.scheduler = schedulers.AdaptiveScheduler(self.kl_threshold, self.adaptive_lr_coef)
 
         elif config['lr_schedule'] == 'linear':
             
