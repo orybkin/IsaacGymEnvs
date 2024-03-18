@@ -199,7 +199,7 @@ class PrioritizedReplayBuffer(ReplayBuffer):
 
 
 class VectorizedReplayBuffer:
-    def __init__(self, obs_shape, action_shape, capacity, device):
+    def __init__(self, obs_shape, action_shape, capacity, device, precision='float32'):
         """Create Vectorized Replay buffer.
         Parameters
         ----------
@@ -212,7 +212,7 @@ class VectorizedReplayBuffer:
         """
 
         self.device = device
-        self.dtype = torch.float32
+        self.dtype = torch.float32 if precision == 'float32' else torch.float16
 
         self.obses = torch.empty((capacity, *obs_shape), dtype=self.dtype, device=self.device)
         self.next_obses = torch.empty((capacity, *obs_shape), dtype=self.dtype, device=self.device)

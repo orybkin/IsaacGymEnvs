@@ -52,6 +52,7 @@ class SACAgent(BaseAlgorithm):
         self.validation_ratio = config.get('validation_ratio', 0.0)
         self.policy_update_fraction = config.get('policy_update_fraction', 1)
         self.mixed_precision = config.get('mixed_precision', False)
+        self.rb_precision = config.get('rb_precision', 'float32')
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -84,12 +85,14 @@ class SACAgent(BaseAlgorithm):
                                                             self.rewards_shaper,
                                                             self.relabel_ratio,
                                                             self.relabel_ratio_random,
-                                                            self.validation_ratio)
+                                                            self.validation_ratio,
+                                                            self.rb_precision)
         else:
             self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
                                                                 self.env_info['action_space'].shape,
                                                                 self.replay_buffer_size,
-                                                                self._device)
+                                                                self._device,
+                                                                self.rb_precision)
         
         self.target_entropy_coef = config.get("target_entropy_coef", 1.0)
         self.target_entropy = self.target_entropy_coef * -self.env_info['action_space'].shape[0]

@@ -35,6 +35,7 @@ params:
       scale_value: 1.0
     max_frames: 10_000_000_000
     mixed_precision: False
+    rb_precision: float32
 
     num_steps_per_episode: 1
     gradient_steps: 8
@@ -45,7 +46,7 @@ params:
     test_every_episodes: 10
     validation_ratio: 0.0
 
-    batch_size: 8192
+    batch_size: 4096
     alpha_lr: 0.005
     actor_lr: 0.0005
     critic_lr: 0.0005

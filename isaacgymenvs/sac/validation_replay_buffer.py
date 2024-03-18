@@ -16,7 +16,7 @@ class ValidationHERReplayBuffer(HERReplayBuffer):
     Replay buffer for sampling HER (Hindsight Experience Replay) transitions.
 
     """
-    def __init__(self, obs_shape, action_shape, capacity, n_envs, device, env, rewards_shaper=None, her_ratio=0.8, random_ratio=0.0, validation_ratio=0.0):
+    def __init__(self, obs_shape, action_shape, capacity, n_envs, device, env, rewards_shaper=None, her_ratio=0.8, random_ratio=0.0, validation_ratio=0.0, precision='float32'):
         """Create Vectorized Replay buffer.
         Parameters
         ----------
@@ -34,7 +34,7 @@ class ValidationHERReplayBuffer(HERReplayBuffer):
         self.val_envs = int(n_envs * validation_ratio)
         self.train_envs = n_envs - self.val_envs
         assert capacity == self.n_steps * n_envs
-        self.dtype = torch.float32
+        self.dtype = torch.float32 if precision == 'float32' else torch.float16
 
         self.obses = torch.empty((n_steps, n_envs, *obs_shape), dtype=self.dtype, device=self.device)
         self.next_obses = torch.empty((n_steps, n_envs, *obs_shape), dtype=self.dtype, device=self.device)
