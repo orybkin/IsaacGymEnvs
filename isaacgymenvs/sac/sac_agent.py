@@ -53,6 +53,7 @@ class SACAgent(BaseAlgorithm):
         self.policy_update_fraction = config.get('policy_update_fraction', 1)
         self.mixed_precision = config.get('mixed_precision', False)
         self.rb_precision = config.get('rb_precision', 'float32')
+        self.fill_buffer_first = config.get('fill_buffer_first', False)
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -573,7 +574,7 @@ class SACAgent(BaseAlgorithm):
 
             self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1), torch.unsqueeze(dones, 1))
 
-            if not random_exploration:
+            if self.training_now() and not random_exploration:
                 self.set_train()
                 update_time_start = time.time()
                 for _ in range(self.gradient_steps):
@@ -599,6 +600,12 @@ class SACAgent(BaseAlgorithm):
         play_time = total_time - total_update_time
 
         return step_time, play_time, total_update_time, total_time, actor_metrics, critic_metrics
+
+    def training_now(self):
+        if self.fill_buffer_first:
+            return self.replay_buffer.full
+        else:
+            return True
 
     def train_epoch(self):
         random_exploration = self.epoch_num < self.num_warmup_steps
@@ -675,6 +682,7 @@ class SACAgent(BaseAlgorithm):
                     if self.save_freq > 0:
                         if self.epoch_num % self.save_freq == 0:
                             self.save(os.path.join(self.nn_dir, 'last_' + self.config['name']))
+                            self.save(checkpoint_name)
 
                     if mean_rewards > self.last_mean_rewards and self.epoch_num >= self.save_best_after:
                         print('saving next best rewards: ', mean_rewards)
