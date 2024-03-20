@@ -2,11 +2,11 @@ from rl_games.algos_torch import torch_ext
 
 from rl_games.common import vecenv
 from rl_games.common import schedulers
-from rl_games.common import experience
 from isaacgymenvs.ppo.a2c_common import print_statistics
 from isaacgymenvs.ppo import model_builder
 from isaacgymenvs.ppo.torch_ext import explained_variance
 from isaacgymenvs.sac import her_replay_buffer
+from isaacgymenvs.sac import experience
 from isaacgymenvs.sac import validation_replay_buffer
 from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm, save_cmd
 
@@ -51,6 +51,9 @@ class SACAgent(BaseAlgorithm):
         self.reset_every_steps = check_for_none(config.get('reset_every_steps', None))
         self.validation_ratio = config.get('validation_ratio', 0.0)
         self.policy_update_fraction = config.get('policy_update_fraction', 1)
+        self.mixed_precision = config.get('mixed_precision', False)
+        self.rb_precision = config.get('rb_precision', 'float32')
+        self.fill_buffer_first = config.get('fill_buffer_first', False)
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -73,7 +76,7 @@ class SACAgent(BaseAlgorithm):
         print("Number of Agents", self.num_actors, "Batch Size", self.batch_size)
         self.build_network()
 
-        if self.relabel_ratio > 0.0 or self.relabel_ratio_random > 0.0:
+        if self.relabel_ratio > 0.0:
             self.replay_buffer = validation_replay_buffer.ValidationHERReplayBuffer(self.env_info['observation_space'].shape,
                                                             self.env_info['action_space'].shape,
                                                             self.replay_buffer_size,
@@ -83,12 +86,14 @@ class SACAgent(BaseAlgorithm):
                                                             self.rewards_shaper,
                                                             self.relabel_ratio,
                                                             self.relabel_ratio_random,
-                                                            self.validation_ratio)
+                                                            self.validation_ratio,
+                                                            self.rb_precision)
         else:
             self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
                                                                 self.env_info['action_space'].shape,
                                                                 self.replay_buffer_size,
-                                                                self._device)
+                                                                self._device,
+                                                                self.rb_precision)
         
         self.target_entropy_coef = config.get("target_entropy_coef", 1.0)
         self.target_entropy = self.target_entropy_coef * -self.env_info['action_space'].shape[0]
@@ -206,7 +211,7 @@ class SACAgent(BaseAlgorithm):
         self.algo_observer = config['features']['observer']
         self.algo_observer.before_init(base_name, config, self.experiment_name)
         self.writer = SummaryWriter(self.summaries_dir)
-        print("Run Directory:", config['name'] + datetime.now().strftime("_%d-%H-%M-%S"))
+        print("Run Directory:", self.experiment_dir)
 
         self.is_tensor_obses = False
         self.is_rnn = False
@@ -300,24 +305,25 @@ class SACAgent(BaseAlgorithm):
         self.model.train()
 
     def update_critic(self, obs, action, reward, next_obs, not_done):
-        with torch.no_grad():
-            dist = self.model.actor(next_obs)
-            next_action = dist.rsample()
-            log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+            with torch.no_grad():
+                dist = self.model.actor(next_obs)
+                next_action = dist.rsample()
+                log_prob = dist.log_prob(next_action).sum(-1, keepdim=True)
 
-            next_action = next_action * self.action_scale
-            target_Q1, target_Q2 = self.model.critic_target(next_obs, next_action)
-            target_V = torch.min(target_Q1, target_Q2) 
-            # target_V = torch.min(target_Q1, target_Q2) - self.alpha * log_prob
+                next_action = next_action * self.action_scale
+                target_Q1, target_Q2 = self.model.critic_target(next_obs, next_action)
+                target_V = torch.min(target_Q1, target_Q2) 
+                # target_V = torch.min(target_Q1, target_Q2) - self.alpha * log_prob
 
-            target_Q = reward + (not_done * self.gamma * target_V)
-            target_Q = target_Q.detach()
+                target_Q = reward + (not_done * self.gamma * target_V)
+                target_Q = target_Q.detach()
 
-        # get current Q estimates
-        current_Q1, current_Q2 = self.model.critic(obs, action)
+            # get current Q estimates
+            current_Q1, current_Q2 = self.model.critic(obs, action)
 
-        critic1_loss = nn.MSELoss()(current_Q1, target_Q)
-        critic2_loss = nn.MSELoss()(current_Q2, target_Q)
+            critic1_loss = nn.MSELoss()(current_Q1, target_Q)
+            critic2_loss = nn.MSELoss()(current_Q2, target_Q)
         critic_loss = critic1_loss + critic2_loss 
 
         info = {'losses/c_loss': critic_loss.detach(),
@@ -338,16 +344,17 @@ class SACAgent(BaseAlgorithm):
         for p in self.model.sac_network.critic.parameters():
             p.requires_grad = False
 
-        dist = self.model.actor(obs)
-        action = dist.rsample()
-        log_prob = dist.log_prob(action).sum(-1, keepdim=True)
-        entropy = -log_prob.mean() #dist.entropy().sum(-1, keepdim=True).mean()
-        action = action * self.action_scale
-        actor_Q1, actor_Q2 = self.model.critic(obs, action)
-        # actor_Q = (actor_Q1 + actor_Q2) / 2
-        actor_Q = torch.min(actor_Q1, actor_Q2)
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+            dist = self.model.actor(obs)
+            action = dist.rsample()
+            log_prob = dist.log_prob(action).sum(-1, keepdim=True)
+            entropy = -log_prob.mean() #dist.entropy().sum(-1, keepdim=True).mean()
+            action = action * self.action_scale
+            actor_Q1, actor_Q2 = self.model.critic(obs, action)
+            # actor_Q = (actor_Q1 + actor_Q2) / 2
+            actor_Q = torch.min(actor_Q1, actor_Q2)
 
-        actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
+            actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
         actor_loss = actor_loss.mean()
 
         for p in self.model.sac_network.critic.parameters():
@@ -567,7 +574,7 @@ class SACAgent(BaseAlgorithm):
 
             self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1), torch.unsqueeze(dones, 1))
 
-            if not random_exploration:
+            if self.training_now() and not random_exploration:
                 self.set_train()
                 update_time_start = time.time()
                 for _ in range(self.gradient_steps):
@@ -593,6 +600,12 @@ class SACAgent(BaseAlgorithm):
         play_time = total_time - total_update_time
 
         return step_time, play_time, total_update_time, total_time, actor_metrics, critic_metrics
+
+    def training_now(self):
+        if self.fill_buffer_first:
+            return self.replay_buffer.full
+        else:
+            return True
 
     def train_epoch(self):
         random_exploration = self.epoch_num < self.num_warmup_steps
@@ -661,13 +674,15 @@ class SACAgent(BaseAlgorithm):
                     self.writer.add_scalar('rewards/time', mean_rewards, total_time)
                     self.writer.add_scalar('episode_lengths/step', mean_lengths, self.frame)
                     self.writer.add_scalar('episode_lengths/time', mean_lengths, total_time)
-                    checkpoint_name = self.config['name'] + '_ep_' + str(self.epoch_num) + '_rew_' + str(mean_rewards)
+                    checkpoint_name = os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_frame_' + str(self.frame) \
+                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_'))
 
                     should_exit = False
 
                     if self.save_freq > 0:
                         if self.epoch_num % self.save_freq == 0:
-                            self.save(os.path.join(self.nn_dir, 'last_' + checkpoint_name))
+                            self.save(os.path.join(self.nn_dir, 'last_' + self.config['name']))
+                            self.save(checkpoint_name)
 
                     if mean_rewards > self.last_mean_rewards and self.epoch_num >= self.save_best_after:
                         print('saving next best rewards: ', mean_rewards)
@@ -675,7 +690,7 @@ class SACAgent(BaseAlgorithm):
                         self.save(os.path.join(self.nn_dir, self.config['name']))
                         if self.last_mean_rewards > self.config.get('score_to_win', float('inf')):
                             print('Maximum reward achieved. Network won!')
-                            self.save(os.path.join(self.nn_dir, checkpoint_name))
+                            self.save(checkpoint_name)
                             should_exit = True
 
                     if self.epoch_num >= self.max_epochs and self.max_epochs != -1:
@@ -683,8 +698,7 @@ class SACAgent(BaseAlgorithm):
                             print('WARNING: Max epochs reached before any env terminated at least once')
                             mean_rewards = -np.inf
 
-                        self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_ep_' + str(self.epoch_num) \
-                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                        self.save(checkpoint_name)
                         print('MAX EPOCHS NUM!')
                         should_exit = True
 
@@ -693,8 +707,7 @@ class SACAgent(BaseAlgorithm):
                             print('WARNING: Max frames reached before any env terminated at least once')
                             mean_rewards = -np.inf
 
-                        self.save(os.path.join(self.nn_dir, 'last_' + self.config['name'] + '_frame_' + str(self.frame) \
-                            + '_rew_' + str(mean_rewards).replace('[', '_').replace(']', '_')))
+                        self.save(checkpoint_name)
                         print('MAX FRAMES NUM!')
                         should_exit = True
 

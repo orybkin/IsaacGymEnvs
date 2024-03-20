@@ -33,10 +33,13 @@ params:
     normalize_input: True
     reward_shaper:
       scale_value: 1.0
-    max_frames: 1_000_000_000
+    max_frames: 10_000_000_000
+    mixed_precision: False
+    rb_precision: float32
+    fill_buffer_first: False
 
     num_steps_per_episode: 1
-    gradient_steps: 1
+    gradient_steps: 8
     policy_update_fraction: 1
 
     save_best_after: 100
@@ -58,14 +61,13 @@ params:
     learnable_temperature: true
 
     relabel_ratio: 0.0
-    relabel_ratio_random: 0.0
+    relabel_ratio_random: 0.2
 
     num_seed_steps: 5
     num_warmup_steps: 10
-    replay_buffer_size: 15998976
+    replay_buffer_size: 31997952
     num_actors: ${....task.env.numEnvs}
 
     # use_diagnostics: True
-    # mixed_precision: False
     # score_to_win: 10000
     # max_epochs: ${resolve_default:50000,${....max_iterations}}

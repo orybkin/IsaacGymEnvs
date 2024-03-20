@@ -34,15 +34,16 @@ print("Action space is", envs.action_space)
 try:
     while True:
         envs.reset()
-        for _ in range(500):
+        for _ in range(10):
             a = torch.rand((num_env,) + envs.action_space.shape, device=device)
             a = torch.zeros_like(a)
-            # a[:, 0] = 1 # forward 
+            a[:, 0] = 1 # forward 
             # a[:, 1] = 1 # left
             # a[:, 2] = 1 # up
             # a[:, 3] = 1 # up
             # import pdb; pdb.set_trace()
-            obs, reward, done, info = envs.step(a)
-            # print(obs['obs'][:, :3])
+            obs, reward, terminated, truncated, info = envs.step(a)
+            print(obs['obs'][0, :3])
+        import pdb; pdb.set_trace()
 except KeyboardInterrupt:
     print("Keyboard interrupt, shutting down.\n")

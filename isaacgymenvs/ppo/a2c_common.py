@@ -189,11 +189,12 @@ class A2CBase(BaseAlgorithm):
 
         self.is_adaptive_lr = config['lr_schedule'] == 'adaptive'
         self.schedule_type = config.get('schedule_type', 'legacy')
+        self.adaptive_lr_coef = config.get('adaptive_lr_coef', 1.5)
 
         # Setting learning rate scheduler
         if self.is_adaptive_lr:
             self.kl_threshold = config['kl_threshold']
-            self.scheduler = schedulers.AdaptiveScheduler(self.kl_threshold)
+            self.scheduler = schedulers.AdaptiveScheduler(self.kl_threshold, self.adaptive_lr_coef)
 
         elif config['lr_schedule'] == 'linear':
             
@@ -384,7 +385,7 @@ class A2CBase(BaseAlgorithm):
             network = builder.load(params['config']['central_value_config'])
             self.config['central_value_config']['network'] = network
 
-    def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames, phase):
+    def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames, phase=''):
         # do we need scaled time?
         self.diagnostics.send_info(self.writer)
         self.writer.add_scalar('performance/step_inference_rl_update_fps', curr_frames / scaled_time, frame)
@@ -554,7 +555,8 @@ class A2CBase(BaseAlgorithm):
 
     def env_step(self, actions):
         actions = self.preprocess_actions(actions)
-        obs, rewards, _, dones, infos = self.vec_env.step(actions)
+        obs, rewards, terminated, truncated, infos = self.vec_env.step(actions)
+        dones = terminated + truncated
 
         if self.is_tensor_obses:
             if self.value_size == 1:
@@ -1112,7 +1114,7 @@ class DiscreteA2CBase(A2CBase):
 
                 self.write_stats(total_time, epoch_num, step_time, play_time, update_time,
                                 a_losses, c_losses, entropies, kls, last_lr, lr_mul, frame, 
-                                scaled_time, scaled_play_time, curr_frames, '_train')
+                                scaled_time, scaled_play_time, curr_frames)
 
                 if self.game_rewards.current_size > 0:
                     mean_rewards = self.game_rewards.get_mean()
@@ -1503,7 +1505,7 @@ class ContinuousA2CBase(A2CBase):
 
                 self.write_stats(total_time, epoch_num, step_time, play_time, update_time,
                                 metrics, last_lr, lr_mul, frame,
-                                scaled_time, scaled_play_time, curr_frames,'_train')
+                                scaled_time, scaled_play_time, curr_frames)
 
                 if self.has_soft_aug:
                     self.writer.add_scalar('losses/aug_loss', np.mean(aug_losses), frame)

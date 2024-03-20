@@ -99,14 +99,17 @@ def launch_rlg_hydra(cfg: DictConfig):
     from isaacgymenvs.learning import amp_network_builder
     import isaacgymenvs
 
-
+    # Make folder name
     time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f")
     if cfg.slurm_job_id:
         run_name = f"{cfg.slurm_job_id}_{cfg.wandb_name}"
     else:
-        run_name = f"{cfg.wandb_name}_{time_str}"
+        run_name = f"{time_str}_{cfg.wandb_name}"
     OmegaConf.set_struct(cfg, False)
-    cfg.full_experiment_name = run_name
+    if cfg['restart']:
+        cfg.full_experiment_name = cfg['restart'].split('/')[1]
+    else:
+        cfg.full_experiment_name = run_name
     OmegaConf.set_struct(cfg, True)
 
     # ensure checkpoints can be specified as relative paths

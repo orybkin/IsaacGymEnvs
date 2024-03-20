@@ -23,6 +23,7 @@ class WandbAlgoObserver(AlgoObserver):
         print(f"Wandb using unique id {experiment_name}")
 
         cfg = self.cfg
+        wandb_name = cfg['restart'].split('/')[1] if cfg['restart'] else experiment_name
 
         # this can fail occasionally, so we try a couple more times
         @retry(3, exceptions=(Exception,))
@@ -34,8 +35,8 @@ class WandbAlgoObserver(AlgoObserver):
                 tags=cfg.wandb_tags,
                 dir=os.path.join('runs', experiment_name),
                 sync_tensorboard=True,
-                id=experiment_name,
-                name=experiment_name,
+                id=wandb_name,
+                name=wandb_name,
                 resume=True,
                 settings=wandb.Settings(start_method='fork'),
             )

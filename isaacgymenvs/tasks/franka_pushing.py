@@ -100,6 +100,7 @@ class FrankaPushing(VecTask):
         self.test_task = self.cfg["env"].get("testTask", -1)
         self.rigid_cubes = self.cfg["env"].get("rigidCubes", False)
         self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
+        self.friction = self.cfg["env"].get("friction", 1)
 
         self.target_idx = [14,15,16]
         self.target_name = 'cube0_pos'
@@ -194,6 +195,8 @@ class FrankaPushing(VecTask):
     def _create_ground_plane(self):
         plane_params = gymapi.PlaneParams()
         plane_params.normal = gymapi.Vec3(0.0, 0.0, 1.0)
+        plane_params.dynamic_friction = self.friction
+        plane_params.static_friction = self.friction
         self.gym.add_ground(self.sim, plane_params)
 
     def _create_envs(self, num_envs, spacing, num_per_row):
@@ -395,6 +398,10 @@ class FrankaPushing(VecTask):
                 self._cube_ids[j] = self.gym.create_actor(env_ptr, cube_assets[j], cube_start_poses[j], f"cube{j}", i, 0, 0)
                 # set colors
                 self.gym.set_rigid_body_color(env_ptr, self._cube_ids[j], 0, gymapi.MESH_VISUAL, cube_colors[j])
+                # Set friction
+                cube_props = gymapi.RigidShapeProperties()
+                cube_props.friction = self.friction
+                self.gym.set_actor_rigid_shape_properties(env_ptr, self._cube_ids[j], [cube_props])
 
             # Set up camera
             if self.enable_camera_sensors and i < self.max_pix:
@@ -570,6 +577,7 @@ class FrankaPushing(VecTask):
         self.freeze_cubes()
         self.gym.simulate(self.sim)
         self.reset_idx(env_ids)
+        self.progress_buf += 1
 
         self.obs_dict["obs"] = torch.clamp(self.obs_buf, -self.clip_obs, self.clip_obs).to(self.rl_device)
 
@@ -923,15 +931,15 @@ class FrankaPushing(VecTask):
             self.extras["images"] = self.pix_buf
         metrics = dict()
         metrics["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)
-        metrics["success@4"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
-        metrics["success@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02
-        metrics["failure@2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) > 0.02
+        metrics["success_4"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
+        metrics["success_2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02
+        metrics["failure_2"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) > 0.02
         if self.test:
             for i in range(min(self.max_pix, self.states['goal_pos'].shape[0])):
                 metrics[f"goal_dist_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i]
-                metrics[f"success@4_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.04
-                metrics[f"success@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.02
-                metrics[f"failure@2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] > 0.02
+                metrics[f"success_4_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.04
+                metrics[f"success_2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] < 0.02
+                metrics[f"failure_2_{i}"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)[i] > 0.02
         self.extras["episodic"] = metrics
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)

@@ -1,8 +1,8 @@
 echo "$@"
-. /global/scratch/users/prestonfu/miniconda3/etc/profile.d/conda.sh
+. /home/miniconda3/etc/profile.d/conda.sh
 conda activate cubes
-export LD_LIBRARY_PATH=/global/scratch/users/prestonfu/miniconda3/envs/cubes/lib/:$LD_LIBRARY_PATH
-cd /global/scratch/users/prestonfu/taskmaster
+export LD_LIBRARY_PATH=/home/miniconda3/envs/cubes/lib/:$LD_LIBRARY_PATH
+cd /global/scratch/users/oleh/taskmaster
 pip install -e . 
 cd isaacgymenvs
 DEVICE=$CUDA_VISIBLE_DEVICES

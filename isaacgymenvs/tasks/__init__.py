@@ -32,11 +32,6 @@ from .anymal import Anymal
 from .anymal_terrain import AnymalTerrain
 from .ball_balance import BallBalance
 from .cartpole import Cartpole 
-from .factory.factory_task_gears import FactoryTaskGears
-from .factory.factory_task_insertion import FactoryTaskInsertion
-from .factory.factory_task_nut_bolt_pick import FactoryTaskNutBoltPick
-from .factory.factory_task_nut_bolt_place import FactoryTaskNutBoltPlace
-from .factory.factory_task_nut_bolt_screw import FactoryTaskNutBoltScrew
 from .franka_cabinet import FrankaCabinet
 from .franka_cube_stack import FrankaCubeStack
 from .franka_reaching import FrankaReaching
@@ -44,66 +39,22 @@ from .franka_reaching2 import FrankaReaching2
 from .franka_pushing import FrankaPushing
 from .franka_pushing_cabinet import FrankaPushingCabinet
 from .humanoid import Humanoid
-from .humanoid_amp import HumanoidAMP
 from .ingenuity import Ingenuity
 from .quadcopter import Quadcopter
 from .shadow_hand import ShadowHand
 from .allegro_hand import AllegroHand
-from .dextreme.allegro_hand_dextreme import AllegroHandDextremeManualDR, AllegroHandDextremeADR
 from .trifinger import Trifinger
-
-from .allegro_kuka.allegro_kuka_reorientation import AllegroKukaReorientation
-from .allegro_kuka.allegro_kuka_regrasping import AllegroKukaRegrasping
-from .allegro_kuka.allegro_kuka_throw import AllegroKukaThrow
-from .allegro_kuka.allegro_kuka_two_arms_regrasping import AllegroKukaTwoArmsRegrasping
-from .allegro_kuka.allegro_kuka_two_arms_reorientation import AllegroKukaTwoArmsReorientation
-
-
-def resolve_allegro_kuka(cfg, *args, **kwargs):
-    subtask_name: str = cfg["env"]["subtask"]
-    subtask_map = dict(
-        reorientation=AllegroKukaReorientation,
-        throw=AllegroKukaThrow,
-        regrasping=AllegroKukaRegrasping,
-    )
-
-    if subtask_name not in subtask_map:
-        print("!!!!!")
-        raise ValueError(f"Unknown subtask={subtask_name} in {subtask_map}")
-
-    return subtask_map[subtask_name](cfg, *args, **kwargs)
-
-def resolve_allegro_kuka_two_arms(cfg, *args, **kwargs):
-    subtask_name: str = cfg["env"]["subtask"]
-    subtask_map = dict(
-        reorientation=AllegroKukaTwoArmsReorientation,
-        regrasping=AllegroKukaTwoArmsRegrasping,
-    )
-
-    if subtask_name not in subtask_map:
-        raise ValueError(f"Unknown subtask={subtask_name} in {subtask_map}")
-
-    return subtask_map[subtask_name](cfg, *args, **kwargs)
 
 
 # Mappings from strings to environments
 isaacgym_task_map = {
     "Mujoco": Mujoco,
     "AllegroHand": AllegroHand,
-    "AllegroKuka": resolve_allegro_kuka,
-    "AllegroKukaTwoArms": resolve_allegro_kuka_two_arms,
-    "AllegroHandManualDR": AllegroHandDextremeManualDR,
-    "AllegroHandADR": AllegroHandDextremeADR,
     "Ant": Ant,
     "Anymal": Anymal,
     "AnymalTerrain": AnymalTerrain,
     "BallBalance": BallBalance,
     "Cartpole": Cartpole,
-    "FactoryTaskGears": FactoryTaskGears,
-    "FactoryTaskInsertion": FactoryTaskInsertion,
-    "FactoryTaskNutBoltPick": FactoryTaskNutBoltPick,
-    "FactoryTaskNutBoltPlace": FactoryTaskNutBoltPlace,
-    "FactoryTaskNutBoltScrew": FactoryTaskNutBoltScrew,
     "FrankaCabinet": FrankaCabinet,
     "FrankaCubeStack": FrankaCubeStack,
     "FrankaReaching": FrankaReaching,
@@ -111,7 +62,6 @@ isaacgym_task_map = {
     "FrankaPushing": FrankaPushing,
     "FrankaPushingCabinet": FrankaPushingCabinet,
     "Humanoid": Humanoid,
-    "HumanoidAMP": HumanoidAMP,
     "Ingenuity": Ingenuity,
     "Quadcopter": Quadcopter,
     "ShadowHand": ShadowHand,
