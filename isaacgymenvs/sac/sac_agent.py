@@ -615,6 +615,58 @@ class SACAgent(BaseAlgorithm):
 
         self.obs = self.env_reset()
 
+        if True:
+            # class GPUCache:
+            #     def __init__(self, array, device):
+            #         # split in 16 arrays along first dimension
+            #         self.split = 16
+            #         self.device = device
+            #         self.cpu_cache = [array[i*array.shape[0]//16:(i+1)*array.shape[0]//16] for i in range(16)]
+            #         self.gpu_cache = [None for _ in range(16)]
+
+            #     def __getitem__(self, idx):
+            #         outer_idx = idx // self.split
+            #         inner_idx = idx % self.split
+            #         if self.gpu_cache[outer_idx] is None:
+            #             self.gpu_cache[outer_idx] = self.cpu_cache[outer_idx].to(self.device)
+            #             if outer_idx > 0 and inner_idx > 0:
+            #                 self.gpu_cache[outer_idx-1] = None
+
+            #         return self.gpu_cache[outer_idx][inner_idx]
+
+            # Load data
+            file = 'runs/240318-140127-489914_ppo_6cubes_sparse_upd1002'
+            print('Loading data from ' + file)
+            # file = 'runs/240318-142454-231687_ppo_6cubes_f'
+            obses = dict(np.load(file + '/buffer_obses.npz', allow_pickle=True))['arr_0']
+            data = dict(np.load(file + '/buffer.npz', allow_pickle=True))['arr_0'].item()
+            buffer = self.replay_buffer
+            obses = torch.Tensor(obses.reshape(-1, self.num_actors, obses.shape[-1])).to(buffer.obses.dtype).to(buffer.device)
+            actions = torch.Tensor(data['actions'].reshape(-1, self.num_actors, data['actions'].shape[-1])).to(buffer.actions.dtype).to(buffer.device)
+            rewards = torch.Tensor(data['rewards'].reshape(-1, self.num_actors, 1)).to(buffer.rewards.dtype).to(buffer.device)
+            dones = torch.Tensor(data['dones'].reshape(-1, self.num_actors, 1)).to(buffer.dones.dtype).to(buffer.device)
+            # cached_obses = GPUCache(obses, buffer.device)
+            # cached_actions = GPUCache(actions, buffer.device) 
+            for i in range(min(obses.shape[0], buffer.obses.shape[0])):
+                if dones[i].any():
+                    continue
+                terminated = torch.tensor([0])
+                buffer.add(obses[i], actions[i], rewards[i], obses[i+1], torch.unsqueeze(terminated, 1), dones[i+1])
+            print('Loaded data!')
+
+            # n_steps = self.replay_buffer.obses.shape[0]
+            # n_steps_data = data['rewards'].reshape(-1, self.num_actors, 1)[:-1][:n_steps].shape[0]
+            # data['dones'][-1] = 1
+            # buffer.obses[:n_steps_data] = torch.Tensor(obses.reshape(-1, self.num_actors, obses.shape[-1])[:-1][:n_steps], dtype=buffer.obses.dtype, device=buffer.device)
+            # buffer.next_obses[:n_steps_data] = torch.Tensor(obses.reshape(-1, self.num_actors, obses.shape[-1])[1:][:n_steps], dtype=buffer.obses.dtype, device=buffer.device)
+            # buffer.actions[:n_steps_data] = torch.Tensor(data['actions'].reshape(-1, self.num_actors, data['actions'].shape[-1])[:-1][:n_steps], dtype=buffer.actions.dtype, device=buffer.device)
+            # buffer.dones[:n_steps_data] = torch.Tensor(data['dones'].reshape(-1, self.num_actors, 1)[:-1][:n_steps], dtype=buffer.dones.dtype, device=buffer.device)
+            # buffer.rewards[:n_steps_data] = torch.Tensor(data['rewards'].reshape(-1, self.num_actors, 1)[:-1][:n_steps], dtype=buffer.rewards.dtype, device=buffer.device)
+            # buffer.idx = n_steps_data % self.buffer.n_steps
+            # buffer.full = n_steps_data >= self.buffer.n_steps
+            # TODO remove transitions across episode boundaries
+            # TODO add steps to go and current_ep_start
+
         while True:
             if reset_check.check(self.frame):
                 print('Reset network!')

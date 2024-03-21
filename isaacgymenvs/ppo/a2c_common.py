@@ -1294,6 +1294,14 @@ class ContinuousA2CBase(A2CBase):
             else:
                 batch_dict = self.play_steps()
 
+        if True:
+            # Save buffer
+            cpu_buffer_dict = dict(map(lambda x: (x[0], x[1].cpu().numpy()) if isinstance(x[1], torch.Tensor) else x, self.experience_buffer.tensor_dict.items()))
+            np.savez(self.experiment_dir + '/buffer.npz', {'actions': cpu_buffer_dict['actions'], 'rewards': cpu_buffer_dict['rewards'], 'dones': cpu_buffer_dict['dones']})
+            np.savez(self.experiment_dir + '/buffer_obses.npz', cpu_buffer_dict['obses'])
+            print('Saved replay buffer to ' + self.experiment_dir + '/buffer.npz')
+            import pdb; pdb.set_trace()
+
         play_time_end = time.time()
         update_time_start = time.time()
         rnn_masks = batch_dict.get('rnn_masks', None)
