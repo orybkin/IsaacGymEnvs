@@ -38,6 +38,7 @@ import sys
 import pipes
 import pathlib
 from rl_games.common import env_configurations, vecenv
+import wandb
 from isaacgymenvs.ppo.algo_observer import AlgoObserver
 
 from isaacgymenvs.tasks import isaacgym_task_map
@@ -247,22 +248,27 @@ class RLGPUAlgoObserver(AlgoObserver):
             self.new_finished_episodes = False
 
             if self.videos:
-                self.writer.add_video('execution' + phase, np.stack(self.videos, 1))
-                self.writer.add_images('start' + phase, self.videos[1])
-                self.writer.add_images('end' + phase, self.videos[-1])
+                # self.writer.add_video('execution' + phase, np.stack(self.videos, 1))
+                # self.writer.add_images('start' + phase, self.videos[1])
+                # self.writer.add_images('end' + phase, self.videos[-1])
                 from tensorboardX.utils import _prepare_video
                 import imageio
                 import torchvision
                 save_dir = osp.join("runs", self.experiment_name, "viz")
                 if not osp.exists(save_dir):
                     os.makedirs(save_dir)
-
                 video = (_prepare_video(np.stack(self.videos, 1)) * 255).astype(np.uint8)
                 get_frame = lambda idx: (torchvision.utils.make_grid(torch.tensor(self.videos[idx]), 4) * 255).numpy().astype(np.uint8).transpose([1, 2, 0])
+
                 imageio.mimwrite(osp.join(save_dir, f'eval{phase}_{epoch_num}.mp4'), video)
                 imageio.mimwrite(osp.join(save_dir, f'eval{phase}_{epoch_num}.gif'), video)
                 imageio.imwrite(osp.join(save_dir, f'eval_start{phase}_{epoch_num}.png'), get_frame(0))
                 imageio.imwrite(osp.join(save_dir, f'eval_end{phase}_{epoch_num}.png'), get_frame(-1))
+
+                if wandb.run is not None:
+                    wandb.log({'execution' + phase: [wandb.Video(np.stack(self.videos, 1) * 255, fps=10, format="mp4")]})
+                    wandb.log({'start' + phase: [wandb.Image(get_frame(0))]})
+                    wandb.log({'end' + phase: [wandb.Image(get_frame(-1))]})
                 self.videos = []
 
         for k, v in self.direct_info.items():
