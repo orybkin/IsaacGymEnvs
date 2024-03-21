@@ -91,8 +91,9 @@ class FrankaPushing(VecTask):
         self.franka_rotation_noise = self.cfg["env"]["frankaRotationNoise"]
         self.franka_dof_noise = self.cfg["env"]["frankaDofNoise"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
-        self.n_cubes = self.cfg["env"]["nCubes"]
-        self.n_observed_cubes = self.cfg["env"].get("nObservedCubes", self.n_cubes)
+        self.n_cubes_train = self.cfg["env"]["nCubes"]
+        self.n_cubes_test = 6
+        self.n_observed_cubes = self.cfg["env"].get("nObservedCubes", self.n_cubes_train)
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
         self.dist_reward_threshold  = self.cfg["env"]["distRewardThreshold"]
@@ -127,9 +128,9 @@ class FrankaPushing(VecTask):
         self.handles = {}                              # will be dict mapping names to relevant sim handles
         self.num_dofs = None                            # Total number of DOFs per env
         self.actions = None                             # Current actions to be deployed
-        self._init_cube_states = [None] * self.n_cubes  # Initial state of cubes for the current env
-        self._cube_states = [None] * self.n_cubes       # Current state of cubes for the current env
-        self._cube_ids = [None] * self.n_cubes          # Actor ID corresponding to cubes for a given env
+        self._init_cube_states = [None] * self.n_cubes_test  # Initial state of cubes for the current env
+        self._cube_states = [None] * self.n_cubes_test       # Current state of cubes for the current env
+        self._cube_ids = [None] * self.n_cubes_test          # Actor ID corresponding to cubes for a given env
 
         # Tensor placeholders
         self._root_state = None             # State of root body        (n_envs, 13)
@@ -254,14 +255,14 @@ class FrankaPushing(VecTask):
         table_stand_opts.fix_base_link = True
         table_stand_asset = self.gym.create_box(self.sim, *[0.2, 0.2, table_stand_height], table_opts)
 
-        self.cube_sizes = [0.07] + [0.07] * self.n_cubes
+        self.cube_sizes = [0.07] + [0.07] * self.n_cubes_test
 
         # Create cubeA asset
         cube_assets = []
         self.cube_colors = cube_colors = []
         cube_options = gymapi.AssetOptions()
         cube_options.density = 1000
-        for j in range(self.n_cubes):
+        for j in range(self.n_cubes_test):
             cube_assets += [self.gym.create_box(self.sim, *([self.cube_sizes[j]] * 3), cube_options)]
             cube_colors += [gymapi.Vec3(0.0, np.random.rand(), np.random.rand())]
         cube_colors[0] = gymapi.Vec3(0.6, 0.1, 0.0)
@@ -318,7 +319,7 @@ class FrankaPushing(VecTask):
 
         # Define start pose for cubes (doesn't really matter since they're get overridden during reset() anyways)
         cube_start_poses = []
-        for j in range(self.n_cubes):
+        for j in range(self.n_cubes_test):
             cube_start_poses += [gymapi.Transform()]
             cube_start_poses[j].p = gymapi.Vec3(-1.0, 0.0, 0.0)
             cube_start_poses[j].r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
@@ -337,8 +338,8 @@ class FrankaPushing(VecTask):
         # compute aggregate size
         num_franka_bodies = self.gym.get_asset_rigid_body_count(franka_asset)
         num_franka_shapes = self.gym.get_asset_rigid_shape_count(franka_asset)
-        max_agg_bodies = num_franka_bodies + 7 + self.n_cubes     # 1 for table, table stand, n cubes, goal, 4 walls
-        max_agg_shapes = num_franka_shapes + 7 + self.n_cubes     # 1 for table, table stand, n cubes, goal, 4 walls
+        max_agg_bodies = num_franka_bodies + 7 + self.n_cubes_test     # 1 for table, table stand, n cubes, goal, 4 walls
+        max_agg_shapes = num_franka_shapes + 7 + self.n_cubes_test     # 1 for table, table stand, n cubes, goal, 4 walls
 
         self.frankas = []
         self.envs = []
@@ -394,7 +395,7 @@ class FrankaPushing(VecTask):
             self.gym.set_rigid_body_color(env_ptr, self._marker_id, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(1, 0, 0))
 
             # Create cubes
-            for j in range(self.n_cubes):
+            for j in range(self.n_cubes_test):
                 self._cube_ids[j] = self.gym.create_actor(env_ptr, cube_assets[j], cube_start_poses[j], f"cube{j}", i, 0, 0)
                 # set colors
                 self.gym.set_rigid_body_color(env_ptr, self._cube_ids[j], 0, gymapi.MESH_VISUAL, cube_colors[j])
@@ -427,7 +428,7 @@ class FrankaPushing(VecTask):
             self.frankas.append(franka_actor)
 
         # Setup init state buffer
-        for j in range(self.n_cubes):
+        for j in range(self.n_cubes_test):
                 self._init_cube_states[j] = torch.zeros(self.num_envs, 13, device=self.device)
 
         # Setup data
@@ -470,12 +471,12 @@ class FrankaPushing(VecTask):
         _massmatrix = self.gym.acquire_mass_matrix_tensor(self.sim, "franka")
         mm = gymtorch.wrap_tensor(_massmatrix)
         self._mm = mm[:, :7, :7]
-        for j in range(self.n_cubes):
+        for j in range(self.n_cubes_test):
             self._cube_states[j] = self._root_state[:, self._cube_ids[j], :]
         self._goal_state = self._root_state[:, self._marker_id, :]
 
         # Initialize states
-        for j in range(self.n_cubes):
+        for j in range(self.n_cubes_test):
             self.states.update({f"cube{j}_size": torch.ones_like(self._eef_state[:, 0]) * self.cube_sizes[j]})
 
         # Initialize actions
@@ -487,7 +488,7 @@ class FrankaPushing(VecTask):
         self._gripper_control = self._pos_control[:, 7:9]
 
         # Initialize indices
-        self._global_indices = torch.arange(self.num_envs * (8 + self.n_cubes), dtype=torch.int32,
+        self._global_indices = torch.arange(self.num_envs * (8 + self.n_cubes_test), dtype=torch.int32,
                                            device=self.device).view(self.num_envs, -1)
 
     def _update_states(self):
@@ -505,7 +506,7 @@ class FrankaPushing(VecTask):
             "goal_pos": self._goal_state[:, :3],
         })
         # Cubes
-        for j in range(self.n_cubes):
+        for j in range(self.n_cubes_test):
             self.states.update({
                 f"cube{j}_angvel": self._cube_states[j][:, 10:],
                 f"cube{j}_vel": self._cube_states[j][:, 7:10],
@@ -592,7 +593,7 @@ class FrankaPushing(VecTask):
             env_ids = torch.arange(self.num_envs, device=self.device)
         env_ids_int32 = env_ids.to(dtype=torch.int32)
 
-        for j in range(self.n_cubes):
+        for j in range(self.n_cubes_test):
             self._reset_init_cube_state(cube=j, env_ids=env_ids, check_valid=j>0)
             # Write these new init states to the sim states
             self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
@@ -642,7 +643,7 @@ class FrankaPushing(VecTask):
                                               len(multi_env_ids_int32))
 
         # Update cube states
-        multi_env_ids_cubes_int32 = self._global_indices[env_ids, -(1 + self.n_cubes):].flatten()
+        multi_env_ids_cubes_int32 = self._global_indices[env_ids, -(1 + self.n_cubes_test):].flatten()
         self.gym.set_actor_root_state_tensor_indexed(
             self.sim, gymtorch.unwrap_tensor(self._root_state),
             gymtorch.unwrap_tensor(multi_env_ids_cubes_int32), len(multi_env_ids_cubes_int32))
@@ -745,6 +746,13 @@ class FrankaPushing(VecTask):
                                               2.0 * self.start_position_noise * (
                                                       torch.rand(num_resets, 3, device=self.device) - 0.5)
     
+        if not self.test:
+            # remove extra cubes
+            if cube >= self.n_cubes_train:
+                off = np.array([0.3, 0.3, -0.115])
+                for i in range(3):
+                    sampled_cube_state[:, i] = table_center[i] + off[i]
+
         if self.test:
             for t in range(min(len(self.tasks), sampled_cube_state.shape[0])):
                 for i in range(3):
