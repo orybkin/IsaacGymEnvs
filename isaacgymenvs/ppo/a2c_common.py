@@ -1435,7 +1435,7 @@ class ContinuousA2CBase(A2CBase):
         update_list = self.update_list
         obs = self.obs
         dones = self.dones
-        for n in range(self.vec_env.env.max_episode_length):
+        for n in range(self.vec_env.env.max_episode_length - 1):
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(obs, masks)
