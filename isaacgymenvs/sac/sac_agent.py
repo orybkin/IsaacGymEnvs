@@ -8,6 +8,7 @@ from isaacgymenvs.ppo.torch_ext import explained_variance
 from isaacgymenvs.sac import her_replay_buffer
 from isaacgymenvs.sac import experience
 from isaacgymenvs.sac import validation_replay_buffer
+from isaacgymenvs.sac import rlpd_replay_buffer
 from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm, save_cmd
 
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
@@ -76,7 +77,7 @@ class SACAgent(BaseAlgorithm):
         self.build_network()
 
         if self.relabel_ratio > 0.0:
-            self.replay_buffer = validation_replay_buffer.ValidationHERReplayBuffer(self.env_info['observation_space'].shape,
+            self.replay_buffer = rlpd_replay_buffer.RLPDReplayBuffer(self.env_info['observation_space'].shape,
                                                             self.env_info['action_space'].shape,
                                                             self.replay_buffer_size,
                                                             self.num_actors,
@@ -636,11 +637,11 @@ class SACAgent(BaseAlgorithm):
 
             # Load data
             file = 'runs/240318-140127-489914_ppo_6cubes_sparse_upd1002'
-            print('Loading data from ' + file)
             # file = 'runs/240318-142454-231687_ppo_6cubes_f'
+            print('Loading data from ' + file)
             obses = dict(np.load(file + '/buffer_obses.npz', allow_pickle=True))['arr_0']
             data = dict(np.load(file + '/buffer.npz', allow_pickle=True))['arr_0'].item()
-            buffer = self.replay_buffer
+            buffer = self.replay_buffer.offline_buffer
             obses = torch.Tensor(obses.reshape(-1, self.num_actors, obses.shape[-1])).to(buffer.obses.dtype).to(buffer.device)
             actions = torch.Tensor(data['actions'].reshape(-1, self.num_actors, data['actions'].shape[-1])).to(buffer.actions.dtype).to(buffer.device)
             rewards = torch.Tensor(data['rewards'].reshape(-1, self.num_actors, 1)).to(buffer.rewards.dtype).to(buffer.device)
@@ -648,8 +649,7 @@ class SACAgent(BaseAlgorithm):
             # cached_obses = GPUCache(obses, buffer.device)
             # cached_actions = GPUCache(actions, buffer.device) 
             for i in range(min(obses.shape[0], buffer.obses.shape[0])):
-                if dones[i].any():
-                    continue
+                if buffer.full: break
                 terminated = torch.tensor([0])
                 buffer.add(obses[i], actions[i], rewards[i], obses[i+1], torch.unsqueeze(terminated, 1), dones[i+1])
             print('Loaded data!')
