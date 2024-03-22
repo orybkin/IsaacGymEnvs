@@ -1473,6 +1473,7 @@ class ContinuousA2CBase(A2CBase):
         test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
         test_render_check = Every(math.ceil(self.vec_env.env.render_every_episodes / self.test_every_episodes))
         test_counter = 0
+        self.start_frame = self.frame
 
         if self.multi_gpu:
             print("====================broadcasting parameters")
@@ -1583,7 +1584,7 @@ class ContinuousA2CBase(A2CBase):
                 return self.last_mean_rewards, epoch_num
             
             # Test
-            iteration = self.frame / self.num_actors
+            iteration = (self.frame - self.start_frame) / self.num_actors
             if test_check.check(iteration):
                 print("Testing...")
                 test_counter += 1
