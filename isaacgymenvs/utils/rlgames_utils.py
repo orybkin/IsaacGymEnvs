@@ -162,7 +162,7 @@ class RLGPUAlgoObserver(AlgoObserver):
         if 'episode' in infos:
             self.ep_infos.append(infos['episode'])
 
-        if 'images' in infos:
+        if 'images' in infos and not self.new_finished_episodes:
             self.videos.append(infos['images'].cpu().numpy())
 
         if 'episode_cumulative' in infos:

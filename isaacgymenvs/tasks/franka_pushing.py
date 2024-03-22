@@ -937,6 +937,13 @@ class FrankaPushing(VecTask):
         if self.render_this_step():
             self.compute_pixel_obs()
             self.extras["images"] = self.pix_buf
+
+            # Add success marker
+            marker_size = self.im_size // 32
+            success = (torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02)[:self.max_pix]
+            self.extras["images"][:,:,:marker_size,:marker_size] = torch.tensor([0., 0., 0.], device=self.device)[None, :, None,None]
+            self.extras["images"][success,:,:marker_size,:marker_size] = torch.tensor([0., 0.75, 0.], device=self.device)[None, :, None,None]
+
         metrics = dict()
         metrics["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)
         metrics["success_4"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
