@@ -116,13 +116,16 @@ class SACAgent(BaseAlgorithm):
                                                 lr=float(self.config['actor_lr']),
                                                 betas=self.config.get("actor_betas", [0.9, 0.999]))
 
-        self.critic_optimizer = torch.optim.Adam(self.model.sac_network.critic.parameters(),
-                                                 lr=float(self.config["critic_lr"]),
-                                                 betas=self.config.get("critic_betas", [0.9, 0.999]))
-
         self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha],
                                                     lr=float(self.config["alpha_lr"]),
                                                     betas=self.config.get("alphas_betas", [0.9, 0.999]))
+        
+        self._build_critic_optimizer()
+        
+    def _build_critic_optimizer(self):
+        self.critic_optimizer = torch.optim.Adam(self.model.sac_network.critic.parameters(),
+                                                 lr=float(self.config["critic_lr"]),
+                                                 betas=self.config.get("critic_betas", [0.9, 0.999]))
 
     def load_networks(self, params):
         builder = model_builder.ModelBuilder()
@@ -262,10 +265,13 @@ class SACAgent(BaseAlgorithm):
         state['epoch'] = self.epoch_num
         state['frame'] = self.frame
         state['actor_optimizer'] = self.actor_optimizer.state_dict()
-        state['critic_optimizer'] = self.critic_optimizer.state_dict()
         state['log_alpha_optimizer'] = self.log_alpha_optimizer.state_dict()        
+        self._get_critic_optimizer_weights(state)
 
         return state
+    
+    def _get_critic_optimizer_weights(self, state):
+        state['critic_optimizer'] = self.critic_optimizer.state_dict()
 
     def set_full_state_weights(self, weights, set_epoch=True):
         self.set_weights(weights)
@@ -275,14 +281,17 @@ class SACAgent(BaseAlgorithm):
             self.frame = weights['frame']
 
         self.actor_optimizer.load_state_dict(weights['actor_optimizer'])
-        self.critic_optimizer.load_state_dict(weights['critic_optimizer'])
         self.log_alpha_optimizer.load_state_dict(weights['log_alpha_optimizer'])
+        self._set_critic_optimizer_weights(weights)
 
         self.last_mean_rewards = weights.get('last_mean_rewards', -1000000000)
 
         if self.vec_env is not None:
             env_state = weights.get('env_state', None)
             self.vec_env.set_env_state(env_state)
+            
+    def _set_critic_optimizer_weights(self, weights):
+        self.critic_optimizer.load_state_dict(weights['critic_optimizer'])
 
     def restore(self, fn, set_epoch=True):
         print("SAC restore")
@@ -339,8 +348,14 @@ class SACAgent(BaseAlgorithm):
             info['losses/c_loss_relabeled'] = nn.MSELoss()(current_Q1[real:], target_Q[real:]).detach()
 
         return critic_loss, info
+    
+    def _critic_zero_grad(self):
+        self.critic_optimizer.zero_grad(set_to_none=True)
+        
+    def _critic_step(self):
+        self.critic_optimizer.step()
 
-    def update_actor_and_alpha(self, obs):
+    def update_actor(self, obs):
         for p in self.model.sac_network.critic.parameters():
             p.requires_grad = False
 
@@ -385,19 +400,19 @@ class SACAgent(BaseAlgorithm):
 
         # Critic
         critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
-        self.critic_optimizer.zero_grad(set_to_none=True)
+        self._critic_zero_grad()
         critic_loss.backward()
         if self.grad_norm is not None:
             grad_norm = nn.utils.clip_grad_norm_(self.model.sac_network.critic.parameters(), self.grad_norm)
         else:
             grad_norm = get_grad_norm(self.model.sac_network.critic.parameters())
         critic_loss_info['info/grad_norm'] = grad_norm.detach()
-        self.critic_optimizer.step()
+        self._critic_step()
 
         actor_loss_info = {}
         if step % self.policy_update_fraction == 0:
             # Actor
-            actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
+            actor_loss, actor_loss_info = self.update_actor(obs)
             self.actor_optimizer.zero_grad(set_to_none=True)
             actor_loss.backward()
             self.actor_optimizer.step()
@@ -422,7 +437,7 @@ class SACAgent(BaseAlgorithm):
 
         with torch.no_grad():
             critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
-            actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
+            actor_loss, actor_loss_info = self.update_actor(obs)
         
         info = {'val/a_loss': actor_loss_info['losses/a_loss'],
                 'val/actor_q': actor_loss_info['info/actor_q'],
