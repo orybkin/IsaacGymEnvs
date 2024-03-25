@@ -97,11 +97,13 @@ class FrankaPushing(VecTask):
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
         self.dist_reward_threshold  = self.cfg["env"]["distRewardThreshold"]
-        self.easy = self.cfg["env"].get("easy", False)
         self.test_task = self.cfg["env"].get("testTask", -1)
-        self.rigid_cubes = self.cfg["env"].get("rigidCubes", False)
-        self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
         self.friction = self.cfg["env"].get("friction", 1)
+
+        # modes 
+        self.mode = self.cfg["env"].get("mode", '')
+        assert self.mode in ['', 'easy', 'grasping']
+        self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
 
         self.target_idx = [14,15,16]
         self.target_name = 'cube0_pos'
@@ -608,7 +610,7 @@ class FrankaPushing(VecTask):
             self.franka_dof_noise * 2.0 * (reset_noise - 0.5),
             self.franka_dof_lower_limits.unsqueeze(0), self.franka_dof_upper_limits)
         
-        if self.easy:
+        if self.mode == 'easy':
             # pos[:, :] = torch.tensor([ 0.0871,  0.5839, -0.0948, -2.5892, -0.1235,  3.4638,  0.9550,  0.0400, 0.0400], device=self.device)[None]
             x1 = torch.tensor([ 0.0871,  0.5839, -0.0948, -2.5892, -0.1235,  3.4638,  0.9550,  0.0400, 0.0400], device=self.device)
             x2 = torch.tensor([ 0.2171,  0.0121, -0.2010, -2.7235,  0.0092,  3.0235,  0.8217,  0.0400, 0.0400], device=self.device)
@@ -705,7 +707,7 @@ class FrankaPushing(VecTask):
 
         # Set z value, which is fixed height
         table_center[2] = table_center[2] + 0.15
-        if self.easy:
+        if self.mode == 'easy':
             table_center[2] = table_center[2] - 0.1
 
         # Initialize rotation, which is no rotation (quat w = 1)
@@ -845,6 +847,9 @@ class FrankaPushing(VecTask):
                                             2.0 * self.goal_position_noise * (
                                                     torch.rand(num_resets, 2, device=self.device) - 0.5)
         sampled_goal_state[:, 2] = center[2]
+        if self.mode == 'grasping':
+            # sampled_goal_state[:, 2] = center[2] + 0.14 * torch.rand(num_resets, device=self.device)
+            sampled_goal_state[::2, 2] = center[2] + 0.14 * torch.rand(num_resets // 2, device=self.device)
 
         if self.test:
             sampled_goal_state[:, 0] = center[0] + 0.11
