@@ -412,8 +412,10 @@ class FrankaPushing(VecTask):
                 cam_props.height = self.cam_w
                 cam_props.enable_tensors = True
                 cam_handle = self.gym.create_camera_sensor(env_ptr, cam_props)
+                # Top view
                 self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(0.12, 0, 1.25), gymapi.Vec3(0, 0, 1))
-                # self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(0.2, 0, 1.3), gymapi.Vec3(0, 0, 1))
+                # Side view
+                # self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(0.22, 0, 1.25), gymapi.Vec3(-0.3, 0, 1))
                 self.cams.append(cam_handle)
                 # Camera tensor
                 cam_tensor = self.gym.get_camera_image_gpu_tensor(self.sim, env_ptr, cam_handle, gymapi.IMAGE_COLOR)
@@ -943,6 +945,8 @@ class FrankaPushing(VecTask):
             success = (torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02)[:self.max_pix]
             self.extras["images"][:,:,:marker_size,:marker_size] = torch.tensor([0., 0., 0.], device=self.device)[None, :, None,None]
             self.extras["images"][success,:,:marker_size,:marker_size] = torch.tensor([0., 0.75, 0.], device=self.device)[None, :, None,None]
+            # import imageio
+            # imageio.imwrite("render.png", (self.extras["images"].cpu().numpy().transpose(0, 2, 3, 1).reshape(4, 4, self.im_size, self.im_size, 3).transpose(0, 2, 1, 3, 4).reshape(4*self.im_size, 4*self.im_size, 3) * 255).astype(np.uint8))
 
         metrics = dict()
         metrics["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)
