@@ -1298,6 +1298,9 @@ class ContinuousA2CBase(A2CBase):
         update_time_start = time.time()
         rnn_masks = batch_dict.get('rnn_masks', None)
 
+        if self.relabel:
+            self.set_eval()
+            relabeled_buffer, relabeled_batch = self.relabel_batch(self.experience_buffer)
         self.set_train()
         self.curr_frames = batch_dict.pop('played_frames')
         self.prepare_dataset(batch_dict, self.dataset)
@@ -1305,7 +1308,6 @@ class ContinuousA2CBase(A2CBase):
         kl_dataset = self.dataset
         if self.relabel:
             self.set_eval()
-            relabeled_buffer, relabeled_batch = self.relabel_batch(self.experience_buffer)
             self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=self.joint_value_norm, identifier='_relabeled')
             kl_dataset = self.relabeled_dataset
             self.set_train()
