@@ -872,42 +872,6 @@ class DoubleQCritic(NetworkBuilder.BaseNetwork):
         return q1, q2
     
 
-class TanhGaussianActor(NetworkBuilder.BaseNetwork):
-    ACTION_BOUND_EPSILON = 1e-6
-
-    def __init__(self, output_dim, log_std_bounds, **mlp_args):
-        super().__init__()
-        self.trunk = self._build_mlp(**mlp_args)
-        self.trunk = nn.Sequential(*list(self.trunk.children()))
-        self.last_fc_mean = nn.Linear(mlp_args['units'][-1], output_dim)
-        self.last_fc_log_std = nn.Linear(mlp_args['units'][-1], output_dim)
-        self.log_std_min, self.log_std_max = log_std_bounds
-
-    def forward(self, obs, deterministic=False, return_log_prob=True):
-        h = self.trunk(obs)
-        mean = self.last_fc_mean(h)
-        log_std = self.last_fc_log_std(h)
-        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
-        std = torch.exp(log_std)
-        normal = dist.Normal(mean, std)
-
-        if deterministic:
-            pre_tanh_value = mean
-            action = torch.tanh(mean)
-        else:
-            pre_tanh_value = normal.rsample()
-            action = torch.tanh(pre_tanh_value)
-
-        if return_log_prob:
-            log_prob = normal.log_prob(pre_tanh_value)
-            log_prob -= torch.log(1 - action.pow(2) + TanhGaussianActor.ACTION_BOUND_EPSILON)
-            log_prob = log_prob.sum(1, keepdim=True)
-        else:
-            log_prob = None
-
-        return action, mean, log_std, log_prob, std, pre_tanh_value
-
-
 class REDQCritic(NetworkBuilder.BaseNetwork):
     def __init__(self, num_Q, output_dim, **mlp_args):
         super().__init__()
@@ -937,7 +901,6 @@ class AbstractSACNetwork(NetworkBuilder.BaseNetwork):
         input_shape = kwargs.pop('input_shape')
         obs_dim = kwargs.pop('obs_dim')
         action_dim = kwargs.pop('action_dim')
-        actor_num_outputs = kwargs.pop('actor_num_outputs')
         self.num_seqs = num_seqs = kwargs.pop('num_seqs', 1)
         NetworkBuilder.BaseNetwork.__init__(self)
         self.load(params)
@@ -964,7 +927,7 @@ class AbstractSACNetwork(NetworkBuilder.BaseNetwork):
             'norm_only_first_layer' : self.norm_only_first_layer
         }
         print("Building Actor")
-        self.actor = self._build_actor(actor_num_outputs, self.log_std_bounds, **actor_mlp_args)
+        self.actor = self._build_actor(2*action_dim, self.log_std_bounds, **actor_mlp_args)
 
         if self.separate:
             print("Building Critic")
@@ -1031,7 +994,6 @@ class SACBuilder(NetworkBuilder):
         self.params = params
 
     def build(self, name, **kwargs):
-        kwargs['actor_num_outputs'] = 2 * kwargs['action_dim']
         net = SACBuilder.Network(self.params, **kwargs)
         return net
 
@@ -1046,15 +1008,11 @@ class SACBuilder(NetworkBuilder):
             return DiagGaussianActor(output_dim, log_std_bounds, **mlp_args)
 
 
-class REDQSacBuilder(NetworkBuilder):
+class REDQSacBuilder(SACBuilder):
     def __init__(self, **kwargs):
         NetworkBuilder.__init__(self)
-        
-    def load(self, params):
-        self.params = params
-
+    
     def build(self, name, **kwargs):
-        kwargs['actor_num_outputs'] = kwargs['action_dim']
         net = REDQSacBuilder.Network(self.params, **kwargs)
         return net
 
@@ -1066,7 +1024,7 @@ class REDQSacBuilder(NetworkBuilder):
             return REDQCritic(self.num_Q, output_dim, **mlp_args)
 
         def _build_actor(self, output_dim, log_std_bounds, **mlp_args):
-            return TanhGaussianActor(output_dim, log_std_bounds, **mlp_args)
+            return DiagGaussianActor(output_dim, log_std_bounds, **mlp_args)
 
         def load(self, params):
             super().load(params)

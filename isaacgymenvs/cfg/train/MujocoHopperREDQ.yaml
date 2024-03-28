@@ -57,6 +57,7 @@ params:
     num_warmup_steps: 5000 # this should be 5000 env steps
     replay_buffer_size: 1000000
     num_actors: ${....task.env.numEnvs}
+    actor_ensemble_mode: min
 
     # use_diagnostics: True
     # mixed_precision: False
@@ -66,3 +67,4 @@ params:
     num_Q: 2
     num_min: 2
     q_target_mode: min
+  

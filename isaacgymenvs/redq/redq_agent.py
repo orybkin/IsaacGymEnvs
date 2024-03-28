@@ -52,21 +52,20 @@ class REDQSacAgent(SACAgent):
         sample_idxs = np.random.choice(self.num_Q, num_mins_to_use, replace=False)
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             with torch.no_grad():
-                next_action, _, _, _, _, _ = self.model.sac_network.actor(next_obs)
+                dist = self.model.sac_network.actor(next_obs)
+                next_action = dist.rsample()
                 next_action = next_action * self.action_scale
                 target_Qs = torch.cat(self.model.sac_network.critic_target(next_obs, next_action, sample_idxs), 1)              
                 if self.q_target_mode == 'min':
                     target_Q, _ = torch.min(target_Qs, dim=1, keepdim=True)
                     target_Q = reward + (not_done * self.gamma * target_Q)
                     target_Q = target_Q.detach()
-                    target_Q = target_Q.expand((-1, self.num_Q)) if target_Q.shape[1] == 1 else target_Q
                 else:
                     raise NotImplementedError()
             
             current_Qs = torch.cat(self.model.sac_network.critic(obs, action), dim=1)
-            current_Q1 = current_Qs[0]
-            
-            squared_errors = F.mse_loss(current_Qs, target_Q, reduction='none')
+            current_Q1 = current_Qs[:, 0]
+            squared_errors = F.mse_loss(current_Qs, target_Q.expand((-1, self.num_Q)), reduction='none')
             critic_losses = squared_errors.mean(dim=0)
         critic_loss = critic_losses.sum()
         
@@ -91,43 +90,3 @@ class REDQSacAgent(SACAgent):
     def _critic_step(self):
         for o in self.critic_optimizers:
             o.step()
-
-    def update_actor(self, obs):
-        for p in self.model.sac_network.critic.parameters():
-            p.requires_grad = False
-
-        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
-            action, _, _, log_prob, _, _ = self.model.sac_network.actor(obs)
-            entropy = -log_prob.mean()
-            action = action * self.action_scale
-            actor_Qs = torch.cat(self.model.critic(obs, action), dim=1)
-            actor_Q = torch.mean(actor_Qs, dim=1)
-            actor_loss = torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q
-        actor_loss = actor_loss.mean()
-        
-        for p in self.model.sac_network.critic.parameters():
-            p.requires_grad = True
-
-        info = {'losses/a_loss': actor_loss.detach(), 
-               'losses/entropy': entropy.detach(),
-               'info/log_prob': log_prob.mean().detach(),
-               'info/alpha': self.alpha.detach(),
-               'info/actor_q': actor_Q.mean().detach(),
-               'info/target_entropy': torch.ones(1) * self.target_entropy,}
-        
-        if self.relabel_ratio > 0:
-            bs = actor_Q.shape[0]
-            real = int(bs * (1 - self.relabel_ratio))
-            info['info/actor_q'] = actor_Q[:real].mean().detach()
-            info['info/actor_q_relabeled'] = actor_Q[real:].mean().detach()
-
-        return actor_loss, info
-
-    def act(self, obs, action_dim, sample=False):
-        obs = self.preproc_obs(obs)
-        action, _, _, _, _, _ = self.model.sac_network.actor(obs)
-        action = action * self.action_scale
-        action = action.clamp(*self.action_range)
-        assert action.ndim == 2
-        return action
-    
