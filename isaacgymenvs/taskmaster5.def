@@ -1,4 +1,4 @@
-# singularity build --fakeroot taskmaster.sif taskmaster5.def   
+# cd /global/scratch/users/prestonfu && singularity build --fakeroot taskmaster.sif taskmaster/isaacgymenvs/taskmaster5.def   
 # singularity shell --nv taskmaster.sif
 # This image is partially taken from the official isaac gym dockerfile and supports headless rendering
 Bootstrap: docker
@@ -6,19 +6,28 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
 
 %files
     
-    ./IsaacGym_Preview_4_Package.tar.gz /home/IsaacGym_Preview_4_Package.tar.gz
+    ./IsaacGym_Preview_4_Package.tar.gz /home/IsaacGym_Preview_4_Package.tar.gz 
+    ./mujoco210-linux-x86_64.tar.gz /home/mujoco210-linux-x86_64.tar.gz
 
 # Container setup
 %post -c /bin/bash 
     export DEBIAN_FRONTEND=noninteractive 
     cd /home 
     tar -xvf IsaacGym_Preview_4_Package.tar.gz
+    tar -xvf mujoco210-linux-x86_64.tar.gz
 
     # dependencies for gym
     apt update && apt-get install -y --no-install-recommends \
         libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev mesa-common-dev \
         zip unzip make gcc-8 g++-8 vulkan-utils mesa-vulkan-drivers pigz \
         git libegl1 git-lfs vulkan-tools
+
+    # dependencies for mujoco
+    apt update
+    apt-get install patchelf
+    apt-get install build-essential libssl-dev libffi-dev libxml2-dev
+    apt-get install libxslt1-dev zlib1g-dev libglew1.5 libglew-dev
+    apt-get install libosmesa6-dev libgl1-mesa-glx libglfw3
 
     # Force gcc 8 to avoid CUDA 10 build issues on newer base OS 
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
