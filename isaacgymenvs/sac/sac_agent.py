@@ -263,8 +263,8 @@ class SACAgent(BaseAlgorithm):
         state['epoch'] = self.epoch_num
         state['frame'] = self.frame
         state['actor_optimizer'] = self.actor_optimizer.state_dict()
-        state['log_alpha_optimizer'] = self.log_alpha_optimizer.state_dict()        
-        self._get_critic_optimizer_weights(state)
+        state['critic_optimizer'] = self.critic_optimizer.state_dict()
+        state['log_alpha_optimizer'] = self.log_alpha_optimizer.state_dict()
 
         return state
 
