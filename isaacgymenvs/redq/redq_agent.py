@@ -16,25 +16,6 @@ class REDQSacAgent(SACAgent):
         self.num_min = config.get("num_min", 2)
         self.q_target_mode = config.get("q_target_mode", 'min')
         
-    def _build_critic_optimizer(self):
-        self.critic_optimizers = []
-        for q_net in self.model.sac_network.critic.q_net_list:
-            self.critic_optimizers.append(
-                torch.optim.Adam(
-                    q_net.parameters(),
-                    lr=float(self.config["critic_lr"]),
-                    betas=self.config.get("critic_betas", [0.9, 0.999])
-                )
-            )
-            
-    def _get_critic_optimizer_weights(self, state):
-        for i, critic_optim in enumerate(self.critic_optimizers, 1):
-            state[f'critic_optimizer_{i}'] = critic_optim.state_dict()
-            
-    def _set_critic_optimizer_weights(self, weights):
-        for i, critic_optim in enumerate(self.critic_optimizers, 1):
-            critic_optim.load_state_dict(weights[f'critic_optimizer_{i}'])
-        
     def get_probabilistic_num_min(self, num_mins):
         # allows the number of min to be a float
         floored_num_mins = np.floor(num_mins)
@@ -64,7 +45,7 @@ class REDQSacAgent(SACAgent):
                     raise NotImplementedError()
             
             current_Qs = torch.cat(self.model.sac_network.critic(obs, action), dim=1)
-            current_Q1 = current_Qs[:, 0]
+            current_Q1 = current_Qs[:, 0:1]
             squared_errors = F.mse_loss(current_Qs, target_Q.expand((-1, self.num_Q)), reduction='none')
             critic_losses = squared_errors.mean(dim=0)
         critic_loss = critic_losses.sum()
@@ -82,11 +63,3 @@ class REDQSacAgent(SACAgent):
             info['losses/c_loss_relabeled'] = nn.MSELoss()(current_Q1[real:], target_Q[real:]).detach()
 
         return critic_loss, info
-        
-    def _critic_zero_grad(self):
-        for o in self.critic_optimizers:
-            o.zero_grad(set_to_none=True)
-        
-    def _critic_step(self):
-        for o in self.critic_optimizers:
-            o.step()
