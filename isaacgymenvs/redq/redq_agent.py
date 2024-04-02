@@ -12,7 +12,7 @@ class REDQSacAgent(SACAgent):
         super().__init__(base_name, params)
         
         config = self.config
-        self.num_Q = config.get("num_Q", 2)
+        self.num_Q = self.model.sac_network.critic.num_Q
         self.num_min = config.get("num_min", 2)
         self.q_target_mode = config.get("q_target_mode", 'min')
         
