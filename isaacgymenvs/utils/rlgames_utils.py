@@ -312,8 +312,8 @@ class RLGPUEnv(vecenv.IVecEnv):
     def step(self, actions):
         return self.env.step(actions)
 
-    def reset(self):
-        return self.env.reset()
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
     
     def reset_done(self):
         return self.env.reset_done()

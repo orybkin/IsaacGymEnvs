@@ -11,7 +11,8 @@ from rl_games.common.experience import ExperienceBuffer
 from rl_games.common.interval_summary_writer import IntervalSummaryWriter
 from isaacgymenvs.ppo.diagnostics import DefaultDiagnostics, PpoDiagnostics
 from isaacgymenvs.ppo import model_builder
-from rl_games.interfaces.base_algorithm import  BaseAlgorithm
+from rl_games.interfaces.base_algorithm import BaseAlgorithm
+from isaacgymenvs.learning.vds_goal_sampler import VDSGoalSampler
 from utils.rlgames_utils import Every
 import numpy as np
 import time
@@ -141,6 +142,7 @@ class A2CBase(BaseAlgorithm):
         self.env_config = config.get('env_config', {})
         self.num_actors = config['num_actors']
         self.env_name = config['env_name']
+        self.algo_name = algo = self.config.get('algo', 'ppo')
 
         self.vec_env = None
         self.env_info = config.get('env_info')
@@ -173,6 +175,16 @@ class A2CBase(BaseAlgorithm):
 
         self.self_play_config = self.config.get('self_play_config', None)
         self.has_self_play_config = self.self_play_config is not None
+        
+        self.use_curriculum = config.get('use_curriculum', False)
+        if self.use_curriculum == 'vds':
+            self.goal_sampler = VDSGoalSampler(self.vec_env.env, self.algo_name, self.device)
+            self.vds_n_candidates = config['vds'].get('n_candidates', 1)
+        elif self.use_curriculum:
+            raise ValueError
+        else:
+            self.goal_sampler = None
+            self.vds_n_candidates = None
 
         self.self_play = config.get('self_play', False)
         self.save_freq = config.get('save_frequency', 0)
@@ -321,7 +333,6 @@ class A2CBase(BaseAlgorithm):
         self.use_smooth_clamp = self.config.get('use_smooth_clamp', False)
 
         assert not self.use_smooth_clamp
-        algo = self.config.get('algo', 'ppo')
         if algo == 'ppo':
             self.actor_loss_func = common_losses.actor_loss
         elif algo == 'awr':
@@ -567,8 +578,8 @@ class A2CBase(BaseAlgorithm):
                 rewards = np.expand_dims(rewards, axis=1)
             return self.obs_to_tensors(obs), torch.from_numpy(rewards).to(self.ppo_device).float(), torch.from_numpy(dones).to(self.ppo_device), infos
 
-    def env_reset(self):
-        obs = self.vec_env.reset()
+    def env_reset(self, **kwargs):
+        obs = self.vec_env.reset(**kwargs)
         obs = self.obs_to_tensors(obs)
         return obs
 
@@ -1082,7 +1093,7 @@ class DiscreteA2CBase(A2CBase):
         total_time = 0
         rep_count = 0
         # self.frame = 0  # loading from checkpoint
-        self.obs = self.env_reset()
+        self.obs = self.env_reset(mode='train')
 
         if self.multi_gpu:
             torch.cuda.set_device(self.local_rank)
@@ -1429,7 +1440,7 @@ class ContinuousA2CBase(A2CBase):
         self.vec_env.env.test = True
         if render:
             self.vec_env.env.override_render = True
-        self.env_reset()
+        self.env_reset(mode='test')
         cut = self.vec_env.env.max_pix
 
         update_list = self.update_list
@@ -1459,7 +1470,7 @@ class ContinuousA2CBase(A2CBase):
         self.vec_env.env.test = False
         if render:
             self.vec_env.env.override_render = False
-        self.env_reset()
+        self.env_reset(mode='test')
 
     def train(self):
         self.init_tensors()
@@ -1467,7 +1478,7 @@ class ContinuousA2CBase(A2CBase):
         start_time = time.time()
         total_time = 0
         rep_count = 0
-        self.obs = self.env_reset()
+        self.obs = self.env_reset(mode='train')
         self.curr_frames = self.batch_size_envs
         self.vec_env.env.start_epoch_num = self.epoch_num
         test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
@@ -1483,6 +1494,14 @@ class ContinuousA2CBase(A2CBase):
 
         while True:
             epoch_num = self.update_epoch()
+            if self.use_curriculum == 'vds':
+                vds_dict = self.goal_sampler.sample_disagreement(self.vds_n_candidates, self.run_model, disagreement_fn_name='std')
+                self.vec_env.env.set_state(vds_dict['states'])
+                self.writer.add_scalar('info/disagreement_mean', vds_dict['stats']['d_mean'])
+                self.writer.add_scalar('info/disagreement_std', vds_dict['stats']['d_std'])
+                self.writer.add_scalar('info/disagreement_entropy', vds_dict['stats']['d_entropy'])
+                self.writer.add_scalar('info/disagreement_max_entropy', vds_dict['stats']['d_max_entropy'])
+                
             step_time, play_time, update_time, sum_time, metrics, last_lr, lr_mul = self.train_epoch()
             total_time += sum_time
             frame = self.frame // self.num_agents
@@ -1591,3 +1610,4 @@ class ContinuousA2CBase(A2CBase):
                 self.test(render=test_render_check.check(test_counter))
                 self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')
                 print("Done Testing.")
+                

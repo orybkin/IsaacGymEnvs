@@ -54,6 +54,13 @@ class BaseModelNetwork(nn.Module):
     def denorm_value(self, value):
         with torch.no_grad():
             return self.value_mean_std(value, denorm=True) if self.normalize_value else value
+        
+    def reduce(self, data, mode):
+        funcs = {
+            'min': lambda data: torch.min(data, dim=1, keepdim=True)[0],
+            'avg': lambda data: torch.min(data, dim=1, keepdim=True)
+        }
+        return funcs[mode](data)
 
 class ModelA2C(BaseModel):
     def __init__(self, network):
@@ -259,7 +266,8 @@ class ModelA2CContinuousLogStd(BaseModel):
             is_train = input_dict.get('is_train', True)
             prev_actions = input_dict.get('prev_actions', None)
             input_dict['obs'] = self.norm_obs(input_dict['obs'])
-            mu, logstd, value, states = self.a2c_network(input_dict, value_index)
+            mu, logstd, full_value, states = self.a2c_network(input_dict)
+            value = self.reduce(full_value, self.a2c_network.critic_ensemble_mode)
             sigma = torch.exp(logstd)
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
             if is_train:
@@ -267,6 +275,7 @@ class ModelA2CContinuousLogStd(BaseModel):
                 prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd)
                 result = {
                     'prev_neglogp' : torch.squeeze(prev_neglogp),
+                    'full_values': full_value,
                     'values' : value,
                     'entropy' : entropy,
                     'rnn_states' : states,
@@ -279,6 +288,7 @@ class ModelA2CContinuousLogStd(BaseModel):
                 neglogp = self.neglogp(selected_action, mu, sigma, logstd)
                 result = {
                     'neglogpacs' : torch.squeeze(neglogp),
+                    'full_values': self.denorm_value(full_value),  # TODO: potentially fix this
                     'values' : self.denorm_value(value),
                     'actions' : selected_action,
                     'rnn_states' : states,
