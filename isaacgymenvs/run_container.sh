@@ -1,4 +1,5 @@
 echo "$@"
+. /home/miniconda3/etc/profile.d/conda.sh
 conda activate cubes2
 export LD_LIBRARY_PATH=/global/scratch/users/prestonfu/miniconda3/envs/cubes2/lib/:$LD_LIBRARY_PATH
 cd /global/scratch/users/prestonfu/taskmaster/isaacgymenvs 

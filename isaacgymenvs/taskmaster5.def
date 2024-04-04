@@ -16,7 +16,7 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
     tar -xvf IsaacGym_Preview_4_Package.tar.gz
     tar -xvf mujoco210-linux-x86_64.tar.gz
 
-    apt-get install -y git vim
+    apt update && apt-get install -y git vim
     mkdir /tmp
 
     # dependencies for gym
