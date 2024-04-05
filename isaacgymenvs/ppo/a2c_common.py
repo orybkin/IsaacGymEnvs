@@ -178,13 +178,10 @@ class A2CBase(BaseAlgorithm):
         
         self.use_curriculum = config.get('use_curriculum', False)
         if self.use_curriculum == 'vds':
-            self.goal_sampler = VDSGoalSampler(self.vec_env.env, self.algo_name, self.device)
-            self.vds_n_candidates = config['vds'].get('n_candidates', 1)
+            self.goal_sampler = VDSGoalSampler(self.vec_env.env, config['vds'], self.algo_name, self.device)
+            self.vec_env.env.use_curriculum = True
         elif self.use_curriculum:
             raise ValueError
-        else:
-            self.goal_sampler = None
-            self.vds_n_candidates = None
 
         self.self_play = config.get('self_play', False)
         self.save_freq = config.get('save_frequency', 0)

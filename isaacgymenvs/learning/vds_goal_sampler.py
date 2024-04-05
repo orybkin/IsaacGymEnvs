@@ -3,28 +3,23 @@ import torch
 from scipy.stats import entropy
 
 class VDSGoalSampler:
-    FUN_NAME_TO_FUN = {
-        'var': lambda vals: torch.var(vals, dim=0),
-        'std': lambda vals: torch.std(vals, dim=0),
-        'tanh': lambda vals: torch.tanh(torch.var(vals, dim=0)),
-        'exp': lambda vals: torch.exp(torch.std(vals, dim=0)),
-    }
-
-    def __init__(self, env, algo_name, device):
+    def __init__(self, env, cfg, algo_name, device):
         self.env = env
         self.algo_name = algo_name
         self.device = device
+        self.temperature = cfg.get('temperature', 1)
+        self.n_candidates = cfg.get('n_candidates', 1)
+        fn_name_to_fn = {
+            'var': lambda vals: torch.var(vals, dim=0),
+            'std': lambda vals: torch.std(vals, dim=0),
+            'tanh': lambda vals: torch.tanh(torch.var(vals, dim=0)),
+            'exp': lambda vals: torch.exp(torch.std(vals, dim=0)),
+        }
+        disagreement_fn_name = cfg.get('disagreement_fn_name', 'std')
+        self.disagreement_fn = fn_name_to_fn[disagreement_fn_name]
     
-    def sample_disagreement(self, n_candidates, model_runner, disagreement_fn_name='std'):
-        """
-        Args:
-          n_candidates: number of goal candidates to sample
-          model_runner: accepts obs dict
-          disagreement_fn_name: as in VDSGoalSampler.FUN_NAME_TO_FUN
-          logger
-        """
-        disagreement_fn = VDSGoalSampler.FUN_NAME_TO_FUN[disagreement_fn_name]
-        cand_states, cand_obses = self.env.sample_goals(n_candidates)
+    def sample_disagreement(self, model_runner):
+        cand_states, cand_obses = self.env.sample_goals(self.n_candidates)
         with torch.no_grad():
             values = []
             if self.algo_name == 'ppo':
@@ -35,7 +30,8 @@ class VDSGoalSampler:
                 values = values.permute(2, 1, 0)
             else:
                 raise NotImplementedError
-        disagreement = disagreement_fn(values).detach().cpu().numpy()  # (num_envs, n_candidates)
+        disagreement = self.disagreement_fn(values).detach().cpu().numpy()  # (num_envs, n_candidates)
+        disagreement = np.exp(np.log(disagreement) * self.temperature)
         sum_disagreement = np.sum(disagreement, axis=1, keepdims=True)
         if np.allclose(sum_disagreement, 0):
             disagreement = None
@@ -47,7 +43,7 @@ class VDSGoalSampler:
         num_envs = cand_obses.shape[1]
         sampled_states = {}
         for k in cand_states[0].keys():
-            cand_states_k = torch.cat([cand_states[i][k].unsqueeze(0) for i in range(n_candidates)], dim=0)  # (n_candidates, num_envs, ...)
+            cand_states_k = torch.cat([cand_states[i][k].unsqueeze(0) for i in range(self.n_candidates)], dim=0)  # (n_candidates, num_envs, ...)
             sampled_states[k] = cand_states_k[indices, torch.arange(num_envs), ...]
         sampled_obs = cand_obses[indices, torch.arange(num_envs), :]
 

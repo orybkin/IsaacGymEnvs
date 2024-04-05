@@ -176,6 +176,8 @@ class FrankaPushing(VecTask):
         # Set control limits
         self.cmd_limit = to_torch([0.1, 0.1, 0.1, 0.5, 0.5, 0.5], device=self.device).unsqueeze(0) if \
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
+        
+        self.use_curriculum = False
 
         # Reset all environments
         self.reset_idx()
@@ -600,7 +602,7 @@ class FrankaPushing(VecTask):
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         
         assert mode in {None, 'train', 'test'}
-        on_table = (mode != 'train') # TODO
+        on_table = (not self.use_curriculum or mode != 'train')
         for j in range(self.n_cubes_test):
             self._reset_init_cube_state(cube=j, env_ids=env_ids, check_valid=j>0, on_table=on_table)
             # Write these new init states to the sim states
