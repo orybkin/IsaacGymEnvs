@@ -13,13 +13,14 @@ params:
     space:
       continuous:
     mlp:
-      units: [256, 256]
+      units: [256, 128, 64]
       activation: relu
 
       initializer:
         name: orthogonal
-    log_std_bounds: [-20, 2]
+    log_std_bounds: [-5, 2]
     normalization: layer_norm
+    num_Q: 2
 
   load_checkpoint: ${if:${...checkpoint},True,False} # flag which sets whether to load the checkpoint
   load_path: ${...checkpoint} # path to the checkpoint to load
@@ -33,11 +34,14 @@ params:
     normalize_input: True
     reward_shaper:
       scale_value: 1.0
-    max_frames: 1_000_000_000
+    max_frames: 10_000_000_000
+    mixed_precision: False
+    rb_precision: float32
+    fill_buffer_first: False
 
     num_steps_per_episode: 1
-    gradient_steps: 20
-    policy_update_fraction: 20
+    gradient_steps: 8
+    policy_update_fraction: 1
 
     save_best_after: 100
     save_frequency: 1000
@@ -54,6 +58,7 @@ params:
 
     gamma: 0.99
     init_alpha: 1.0
+    target_entropy_coef: 1.0
     learnable_temperature: true
 
     relabel_ratio: 0.0
@@ -61,10 +66,9 @@ params:
 
     num_seed_steps: 5
     num_warmup_steps: 5000
-    replay_buffer_size: 1000000
+    replay_buffer_size: 1048576
     num_actors: ${....task.env.numEnvs}
+    actor_ensemble_mode: min
 
-    policy_update_delay: 20
-    num_Q: 2
-    num_min: 2
     q_target_mode: min
+    num_min: 2
