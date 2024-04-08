@@ -25,8 +25,8 @@ class VDSGoalSampler:
             if self.algo_name == 'ppo':
                 for cand_obs in cand_obses:
                     res_dict = model_runner({'obs': cand_obs})
-                    values.append(res_dict['full_values'].unsqueeze(0))
-                values = torch.cat(values, dim=0)  # (n_candidates, num_envs, num_critics)
+                    values.append(res_dict['full_values'])
+                values = torch.stack(values, dim=0)  # (n_candidates, num_envs, num_critics)
                 values = values.permute(2, 1, 0)
             else:
                 raise NotImplementedError
@@ -39,11 +39,11 @@ class VDSGoalSampler:
             disagreement /= sum_disagreement
         indices = np.apply_along_axis(lambda row: np.random.choice(len(row), p=row), axis=1, arr=disagreement)
         
-        cand_obses = torch.cat([x.unsqueeze(0) for x in cand_obses], dim=0)
+        cand_obses = torch.stack(cand_obses, dim=0)
         num_envs = cand_obses.shape[1]
         sampled_states = {}
         for k in cand_states[0].keys():
-            cand_states_k = torch.cat([cand_states[i][k].unsqueeze(0) for i in range(self.n_candidates)], dim=0)  # (n_candidates, num_envs, ...)
+            cand_states_k = torch.stack([cand_states[i][k] for i in range(self.n_candidates)], dim=0)  # (n_candidates, num_envs, ...)
             sampled_states[k] = cand_states_k[indices, torch.arange(num_envs), ...]
         sampled_obs = cand_obses[indices, torch.arange(num_envs), :]
 

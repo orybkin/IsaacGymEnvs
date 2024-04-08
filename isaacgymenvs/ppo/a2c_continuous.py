@@ -107,6 +107,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             res_dict = self.model(batch_dict)
             action_log_probs = res_dict['prev_neglogp']
+            full_values = res_dict['full_values']
             values = res_dict['values']
             entropy = res_dict['entropy']
             mu = res_dict['mus']
@@ -115,16 +116,17 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
 
             if self.has_value_loss:
-                c_loss, clip_value_frac = a2c_common.critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+                c_losses, clip_value_fracs = a2c_common.critic_loss(value_preds_batch, full_values, curr_e_clip, return_batch, self.clip_value)
             else:
-                c_loss = torch.zeros(1, device=self.ppo_device)
+                c_losses = torch.zeros(full_values.shape[1], device=self.ppo_device)
+            c_loss = c_losses.sum()
             if self.bound_loss_type == 'regularisation':
                 b_loss = self.reg_loss(mu)
             elif self.bound_loss_type == 'bound':
                 b_loss = self.bound_loss(mu)
             else:
                 b_loss = torch.zeros(1, device=self.ppo_device)
-            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
+            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
             a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
 
             loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
@@ -145,12 +147,14 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             if rnn_masks is not None:
                 kl_dist = (kl_dist * rnn_masks).sum() / rnn_masks.numel()  #/ sum_mask
         
-        self.diagnostics.mini_batch(self, 
-        {
+        diagnostics_batch = {
             'explained_variance': torch_ext.explained_variance(value_preds_batch, return_batch, rnn_masks).detach(),
             'clipped_fraction': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach(),
-            'clipped_value_fraction': clip_value_frac.detach(),
-        })  
+            'clipped_value_fraction': clip_value_frac.mean().detach()
+        }
+        for i, clip_value_frac in enumerate(clip_value_fracs):
+            diagnostics_batch[f'clipped_value_fraction_{i}'] = clip_value_frac.detach()
+        self.diagnostics.mini_batch(self, diagnostics_batch)  
 
         losses_dict = {'a_loss': a_loss, 'c_loss': c_loss, 'entropy': entropy}
         if self.bounds_loss_coef is not None:

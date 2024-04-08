@@ -66,18 +66,19 @@ def awr_loss(old_action_neglog_probs_batch, action_neglog_probs, advantage, is_p
     return a_loss
 
 
-def critic_loss(value_preds_batch, values, curr_e_clip, return_batch, clip_value):
+def critic_loss(value_preds_batch, full_values, curr_e_clip, return_batch, clip_value):
+    value_preds_batch = value_preds_batch.expand_as(full_values)
     if clip_value:
         value_pred_clipped = value_preds_batch + \
-                (values - value_preds_batch).clamp(-curr_e_clip, curr_e_clip)
-        value_losses = (values - return_batch)**2
+            (full_values - value_preds_batch).clamp(-curr_e_clip, curr_e_clip)
+        value_losses = (full_values - return_batch)**2
         value_losses_clipped = (value_pred_clipped - return_batch)**2
-        c_loss = torch.max(value_losses, value_losses_clipped)
-        clipped_frac = (value_losses < value_losses_clipped).sum() / np.prod(value_losses.shape)
+        c_losses = torch.max(value_losses, value_losses_clipped)
+        clipped_fracs = (value_losses < value_losses_clipped).sum(dim=0) / value_losses.shape[0]
     else:
-        c_loss = (return_batch - values)**2
-        clipped_frac = torch.Tensor([0])
-    return c_loss, clipped_frac
+        c_losses = (return_batch - full_values)**2
+        clipped_fracs = torch.zeros(full_values.shape[1])
+    return c_losses, clipped_fracs
 
 
 class A2CBase(BaseAlgorithm):
@@ -179,6 +180,7 @@ class A2CBase(BaseAlgorithm):
         self.use_curriculum = config.get('use_curriculum', False)
         if self.use_curriculum == 'vds':
             self.goal_sampler = VDSGoalSampler(self.vec_env.env, config['vds'], self.algo_name, self.device)
+            self.vds_n_candidates = config['vds'].get('n_candidates', 1)
             self.vec_env.env.use_curriculum = True
         elif self.use_curriculum:
             raise ValueError
@@ -1492,7 +1494,7 @@ class ContinuousA2CBase(A2CBase):
         while True:
             epoch_num = self.update_epoch()
             if self.use_curriculum == 'vds':
-                vds_dict = self.goal_sampler.sample_disagreement(self.vds_n_candidates, self.run_model, disagreement_fn_name='std')
+                vds_dict = self.goal_sampler.sample_disagreement(self.run_model)
                 self.vec_env.env.set_state(vds_dict['states'])
                 self.writer.add_scalar('info/disagreement_mean', vds_dict['stats']['d_mean'])
                 self.writer.add_scalar('info/disagreement_std', vds_dict['stats']['d_std'])

@@ -382,9 +382,6 @@ class A2CBuilder(NetworkBuilder):
                         c_out = self.critic_mlp(c_out)
                 else:
                     a_out = self.actor_mlp(a_out)
-                    value = []
-                    for critic_mlp, value_fn in zip(self.critic_mlps, self.values):
-                        value.append(self.value_act(value_fn(critic_mlp(c_out))))
             else:
                 out = obs
                 out = self.actor_cnn(out)
@@ -426,7 +423,9 @@ class A2CBuilder(NetworkBuilder):
                     out = self.actor_mlp(out)
                 c_out = a_out = out
             
-            value = [self.value_act(value_fn(c_out)) for value_fn in self.values]
+            value = []
+            for critic_mlp, value_fn in zip(self.critic_mlps, self.values):
+                value.append(self.value_act(value_fn(critic_mlp(c_out))))
             value = torch.cat(value, dim=1)
 
             if self.central_value:
