@@ -150,7 +150,7 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         diagnostics_batch = {
             'explained_variance': torch_ext.explained_variance(value_preds_batch, return_batch, rnn_masks).detach(),
             'clipped_fraction': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach(),
-            'clipped_value_fraction': clip_value_frac.mean().detach()
+            'clipped_value_fraction': clip_value_fracs.mean().detach()
         }
         for i, clip_value_frac in enumerate(clip_value_fracs):
             diagnostics_batch[f'clipped_value_fraction_{i}'] = clip_value_frac.detach()
