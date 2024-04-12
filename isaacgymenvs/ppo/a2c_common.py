@@ -666,6 +666,7 @@ class A2CBase(BaseAlgorithm):
 
         for i in weights['optimizer']['state'].values(): i['step'] = i['step'].to('cpu')
         self.optimizer.load_state_dict(weights['optimizer'])
+        self.update_lr(self.last_lr)
 
         self.last_mean_rewards = weights.get('last_mean_rewards', -1000000000)
 
