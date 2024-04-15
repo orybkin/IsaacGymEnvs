@@ -75,7 +75,8 @@ params:
     bounds_loss_coef: 0.0001
     critic_ensemble_mode: min
 
-    use_curriculum: False
+  curriculum:
+    enable: False
     vds:
       n_candidates: 1
       temperature: 1

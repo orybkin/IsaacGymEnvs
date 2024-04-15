@@ -177,13 +177,13 @@ class A2CBase(BaseAlgorithm):
         self.self_play_config = self.config.get('self_play_config', None)
         self.has_self_play_config = self.self_play_config is not None
         
-        self.use_curriculum = config.get('use_curriculum', False)
-        if self.use_curriculum == 'vds':
-            self.goal_sampler = VDSGoalSampler(self.vec_env.env, config['vds'], self.algo_name, self.device)
-            self.vds_n_candidates = config['vds'].get('n_candidates', 1)
-            self.vec_env.env.use_curriculum = True
-        elif self.use_curriculum:
-            raise ValueError
+        curriculum_cfg = params['curriculum']
+        use_curriculum = self.vec_env.env.use_curriculum = curriculum_cfg.get('enable', False)
+        if use_curriculum == 'vds':
+            self.vec_env.env.goal_sampler = VDSGoalSampler(
+                self.vec_env.env, curriculum_cfg['vds'], self.run_model, self.algo_name, self.device)
+        elif use_curriculum:
+            raise NotImplementedError
 
         self.self_play = config.get('self_play', False)
         self.save_freq = config.get('save_frequency', 0)
@@ -327,6 +327,7 @@ class A2CBase(BaseAlgorithm):
                 self.writer = writer
         else:
             self.writer = None
+        self.vec_env.env.write_fn = self.writer.add_scalar
 
         self.value_bootstrap = self.config.get('value_bootstrap')
         self.use_smooth_clamp = self.config.get('use_smooth_clamp', False)
@@ -1493,14 +1494,6 @@ class ContinuousA2CBase(A2CBase):
 
         while True:
             epoch_num = self.update_epoch()
-            if self.use_curriculum == 'vds':
-                vds_dict = self.goal_sampler.sample_disagreement(self.run_model)
-                self.vec_env.env.set_state(vds_dict['states'])
-                self.writer.add_scalar('info/disagreement_mean', vds_dict['stats']['d_mean'])
-                self.writer.add_scalar('info/disagreement_std', vds_dict['stats']['d_std'])
-                self.writer.add_scalar('info/disagreement_entropy', vds_dict['stats']['d_entropy'])
-                self.writer.add_scalar('info/disagreement_max_entropy', vds_dict['stats']['d_max_entropy'])
-                
             step_time, play_time, update_time, sum_time, metrics, last_lr, lr_mul = self.train_epoch()
             total_time += sum_time
             frame = self.frame // self.num_agents

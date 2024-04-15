@@ -3,8 +3,9 @@ import torch
 from scipy.stats import entropy
 
 class VDSGoalSampler:
-    def __init__(self, env, cfg, algo_name, device):
+    def __init__(self, env, cfg, model_runner, algo_name, device):
         self.env = env
+        self.model_runner = model_runner
         self.algo_name = algo_name
         self.device = device
         self.temperature = cfg.get('temperature', 1)
@@ -18,7 +19,7 @@ class VDSGoalSampler:
         disagreement_fn_name = cfg.get('disagreement_fn_name', 'std')
         self.disagreement_fn = fn_name_to_fn[disagreement_fn_name]
     
-    def sample_disagreement(self, model_runner):
+    def sample_disagreement(self):
         cand_states, cand_obses = self.env.sample_goals(self.n_candidates)
         cand_obses = torch.stack(cand_obses, dim=0)
         num_envs = cand_obses.shape[1]
@@ -26,7 +27,7 @@ class VDSGoalSampler:
             values = []
             if self.algo_name == 'ppo':
                 for cand_obs in cand_obses:
-                    res_dict = model_runner({'obs': cand_obs})
+                    res_dict = self.model_runner({'obs': cand_obs})
                     values.append(res_dict['full_values'])
                 values = torch.stack(values, dim=0)  # (n_candidates, num_envs, num_critics)
                 values = values.permute(2, 1, 0)

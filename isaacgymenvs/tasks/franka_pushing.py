@@ -36,6 +36,7 @@ from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
+from isaacgymenvs.learning.vds_goal_sampler import VDSGoalSampler
 
 
 @torch.jit.script
@@ -177,7 +178,7 @@ class FrankaPushing(VecTask):
         self.cmd_limit = to_torch([0.1, 0.1, 0.1, 0.5, 0.5, 0.5], device=self.device).unsqueeze(0) if \
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
         
-        self.use_curriculum = False
+        self.use_curriculum = False  # filled in later
 
         # Reset all environments
         self.reset_idx()
@@ -577,11 +578,27 @@ class FrankaPushing(VecTask):
             # self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
         self.gym.end_access_image_tensors(self.sim)
 
-    def reset(self, mode=None):
+    def reset(self, mode='train'):
         """Reset the environment.
         Returns:
             Observation dictionary, indices of environments being reset
         """
+        if self.goal_sampler is not None and mode == 'train':
+            if isinstance(self.goal_sampler, VDSGoalSampler):
+                vds_dict = self.goal_sampler.sample_disagreement()
+                self.set_state(vds_dict['states'])
+                if self.write_fn is not None:
+                    self.write_fn('info/disagreement_mean', vds_dict['stats']['d_mean'])
+                    self.write_fn('info/disagreement_std', vds_dict['stats']['d_std'])
+                    self.write_fn('info/disagreement_entropy', vds_dict['stats']['d_entropy'])
+                    self.write_fn('info/disagreement_max_entropy', vds_dict['stats']['d_max_entropy'])
+                return vds_dict['obs']
+            else:
+                raise NotImplementedError
+        else:
+            return self.reset_helper(mode)
+
+    def reset_helper(self, mode='test'):
         env_ids = torch.arange(self.num_envs, device=self.device)
         self.freeze_cubes()
         self.gym.simulate(self.sim)
@@ -596,13 +613,13 @@ class FrankaPushing(VecTask):
 
         return self.obs_dict
     
-    def reset_idx(self, env_ids=None, mode=None):
+    def reset_idx(self, env_ids=None, mode='test'):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         
-        assert mode in {None, 'train', 'test'}
-        on_table = (not self.use_curriculum or mode != 'train')
+        assert mode in {'train', 'test'}
+        on_table = (not self.use_curriculum or mode == 'test')
         for j in range(self.n_cubes_test):
             self._reset_init_cube_state(cube=j, env_ids=env_ids, check_valid=j>0, on_table=on_table)
             # Write these new init states to the sim states
@@ -688,7 +705,7 @@ class FrankaPushing(VecTask):
         """Uniformly samples goals"""
         states, obses = [], []
         for _ in range(n_candidates):
-            self.reset(mode='train')
+            self.reset_helper(mode='train')
             obses.append(self.compute_observations())
             states.append(self.states)
         return states, obses
