@@ -583,7 +583,7 @@ class FrankaPushing(VecTask):
         Returns:
             Observation dictionary, indices of environments being reset
         """
-        if self.goal_sampler is not None and mode == 'train':
+        if self.use_curriculum and mode == 'train':
             if isinstance(self.goal_sampler, VDSGoalSampler):
                 vds_dict = self.goal_sampler.sample_disagreement()
                 self.set_state(vds_dict['states'])
@@ -598,7 +598,7 @@ class FrankaPushing(VecTask):
         else:
             return self.reset_helper(mode)
 
-    def reset_helper(self, mode='test'):
+    def reset_helper(self, mode='train'):
         env_ids = torch.arange(self.num_envs, device=self.device)
         self.freeze_cubes()
         self.gym.simulate(self.sim)
@@ -613,7 +613,7 @@ class FrankaPushing(VecTask):
 
         return self.obs_dict
     
-    def reset_idx(self, env_ids=None, mode='test'):
+    def reset_idx(self, env_ids=None, mode='train'):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
         env_ids_int32 = env_ids.to(dtype=torch.int32)
