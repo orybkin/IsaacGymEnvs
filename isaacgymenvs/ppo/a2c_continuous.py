@@ -119,7 +119,9 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
                 c_losses, clip_value_fracs = a2c_common.critic_loss(value_preds_batch, full_values, curr_e_clip, return_batch, self.clip_value)
             else:
                 c_losses = torch.zeros(full_values.shape[1], device=self.ppo_device)
-            c_loss = c_losses.sum()
+            
+            ci_losses = c_losses.mean(dim=0)
+            c_loss = ci_losses.sum()
             if self.bound_loss_type == 'regularisation':
                 b_loss = self.reg_loss(mu)
             elif self.bound_loss_type == 'bound':
@@ -154,9 +156,11 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         }
         for i, clip_value_frac in enumerate(clip_value_fracs):
             diagnostics_batch[f'clipped_value_fraction_{i}'] = clip_value_frac.detach()
-        self.diagnostics.mini_batch(self, diagnostics_batch)  
+        self.diagnostics.mini_batch(self, diagnostics_batch)
 
         losses_dict = {'a_loss': a_loss, 'c_loss': c_loss, 'entropy': entropy}
+        for i, ci_loss in enumerate(ci_losses, 1):
+            losses_dict[f'c{i}_loss'] = ci_loss
         if self.bounds_loss_coef is not None:
             losses_dict['bounds_loss'] = b_loss
         return losses_dict, kl_dist, self.last_lr, lr_mul, mu.detach(), sigma.detach()

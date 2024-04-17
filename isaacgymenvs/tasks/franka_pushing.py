@@ -36,7 +36,8 @@ from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.learning.vds_goal_sampler import VDSGoalSampler
+from isaacgymenvs.learning.curriculum.goid import GOIDGoalSampler
+from isaacgymenvs.learning.curriculum.vds import VDSGoalSampler
 
 
 @torch.jit.script
@@ -179,6 +180,7 @@ class FrankaPushing(VecTask):
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
         
         self.use_curriculum = False  # filled in later
+        self.goal_sampler = None     # filled in later
 
         # Reset all environments
         self.reset_idx()
@@ -583,22 +585,6 @@ class FrankaPushing(VecTask):
         Returns:
             Observation dictionary, indices of environments being reset
         """
-        if self.use_curriculum and mode == 'train':
-            if isinstance(self.goal_sampler, VDSGoalSampler):
-                vds_dict = self.goal_sampler.sample_disagreement()
-                self.set_state(vds_dict['states'])
-                if self.write_fn is not None:
-                    self.write_fn('info/disagreement_mean', vds_dict['stats']['d_mean'])
-                    self.write_fn('info/disagreement_std', vds_dict['stats']['d_std'])
-                    self.write_fn('info/disagreement_entropy', vds_dict['stats']['d_entropy'])
-                    self.write_fn('info/disagreement_max_entropy', vds_dict['stats']['d_max_entropy'])
-                return vds_dict['obs']
-            else:
-                raise NotImplementedError
-        else:
-            return self.reset_helper(mode)
-
-    def reset_helper(self, mode='train'):
         env_ids = torch.arange(self.num_envs, device=self.device)
         self.freeze_cubes()
         self.gym.simulate(self.sim)
@@ -614,6 +600,24 @@ class FrankaPushing(VecTask):
         return self.obs_dict
     
     def reset_idx(self, env_ids=None, mode='train'):
+        # FIXME: need to actually overwrite them
+        if self.use_curriculum and mode == 'train':
+            if isinstance(self.goal_sampler, VDSGoalSampler):
+                res_dict = self.goal_sampler.sample_disagreement()
+            elif isinstance(self.goal_sampler, GOIDGoalSampler):
+                res_dict = self.goal_sampler.rejection_sampling()
+            else:
+                raise NotImplementedError
+            
+            self.set_state(res_dict['states'])
+            if self.write_fn is not None:
+                for k, v in res_dict['stats'].items():
+                    self.write_fn(f'info/{k}', v)
+            return res_dict['obs']
+        else:
+            self.reset_idx_helper(env_ids, mode)
+        
+    def reset_idx_helper(self, env_ids=None, mode='train'):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
         env_ids_int32 = env_ids.to(dtype=torch.int32)
@@ -705,7 +709,7 @@ class FrankaPushing(VecTask):
         """Uniformly samples goals"""
         states, obses = [], []
         for _ in range(n_candidates):
-            self.reset_helper(mode='train')
+            self.reset_idx_helper(mode='train')
             obses.append(self.compute_observations())
             states.append(self.states)
         return states, obses

@@ -81,3 +81,19 @@ params:
       n_candidates: 1
       temperature: 1
       disagreement_fn_name: std
+    goid:
+      intermediate:
+        lower: 0.1
+        upper: 0.9
+        max_sample_attempts: 10
+      mlp:
+        units: [256, 128, 64]
+        activation: elu
+        d2rl: False
+
+        initializer:
+          name: default
+        regularizer:
+          name: None
+      config:
+        learning_rate: 5e-4

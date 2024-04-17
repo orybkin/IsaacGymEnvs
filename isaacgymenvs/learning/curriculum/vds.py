@@ -3,11 +3,10 @@ import torch
 from scipy.stats import entropy
 
 class VDSGoalSampler:
-    def __init__(self, env, cfg, model_runner, algo_name, device):
+    def __init__(self, env, cfg, model_runner, algo_name):
         self.env = env
         self.model_runner = model_runner
         self.algo_name = algo_name
-        self.device = device
         self.temperature = cfg.get('temperature', 1)
         self.n_candidates = cfg.get('n_candidates', 1)
         fn_name_to_fn = {
@@ -49,11 +48,11 @@ class VDSGoalSampler:
             sampled_states[k] = cand_states_k[indices, torch.arange(num_envs), ...]
         sampled_obs = cand_obses[indices, torch.arange(num_envs), :]
 
-        # FIXME: disagreement logging
+        # TODO: fix logging; currently takes a mean over envs
         if disagreement is None:
             d_mean = d_std = d_entropy = d_max_entropy = -1
         else:
-            disagreement = np.mean(disagreement, axis=0)  # mean over envs
+            disagreement = np.mean(disagreement, axis=0)
             d_mean = np.mean(disagreement)
             d_std = np.std(disagreement)
             _, d_counts = np.unique(disagreement, return_counts=True)
@@ -64,10 +63,10 @@ class VDSGoalSampler:
             'states': sampled_states,
             'obs': sampled_obs,
             'stats': {
-                'd_mean': d_mean,
-                'd_std': d_std,
-                'd_entropy': d_entropy,
-                'd_max_entropy': d_max_entropy,
+                'disagreement_mean': d_mean,
+                'disagreement_std': d_std,
+                'disagreement_entropy': d_entropy,
+                'disagreement_max_entropy': d_max_entropy,
             }
         }
     

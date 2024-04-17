@@ -12,7 +12,8 @@ from rl_games.common.interval_summary_writer import IntervalSummaryWriter
 from isaacgymenvs.ppo.diagnostics import DefaultDiagnostics, PpoDiagnostics
 from isaacgymenvs.ppo import model_builder
 from rl_games.interfaces.base_algorithm import BaseAlgorithm
-from isaacgymenvs.learning.vds_goal_sampler import VDSGoalSampler
+from isaacgymenvs.learning.curriculum.goid import GOIDGoalSampler
+from isaacgymenvs.learning.curriculum.vds import VDSGoalSampler
 from utils.rlgames_utils import Every
 import numpy as np
 import time
@@ -176,14 +177,6 @@ class A2CBase(BaseAlgorithm):
 
         self.self_play_config = self.config.get('self_play_config', None)
         self.has_self_play_config = self.self_play_config is not None
-        
-        curriculum_cfg = params['curriculum']
-        use_curriculum = self.vec_env.env.use_curriculum = curriculum_cfg.get('enable', False)
-        if use_curriculum == 'vds':
-            self.vec_env.env.goal_sampler = VDSGoalSampler(
-                self.vec_env.env, curriculum_cfg['vds'], self.run_model, self.algo_name, self.device)
-        elif use_curriculum:
-            raise NotImplementedError
 
         self.self_play = config.get('self_play', False)
         self.save_freq = config.get('save_frequency', 0)
@@ -262,6 +255,16 @@ class A2CBase(BaseAlgorithm):
                 self.obs_shape[k] = v.shape
         else:
             self.obs_shape = self.observation_space.shape
+            
+        curriculum_cfg = params['curriculum']
+        use_curriculum = self.vec_env.env.use_curriculum = curriculum_cfg.get('enable', False)
+        if use_curriculum == 'vds':
+            self.vec_env.env.goal_sampler = VDSGoalSampler(
+                self.vec_env.env, curriculum_cfg['vds'], self.run_model, self.algo_name)
+        elif use_curriculum == 'goid':
+            self.vec_env.env.goal_sampler = GOIDGoalSampler(self.vec_env.env, self.obs_shape, curriculum_cfg['goid'], self.device).to(self.device)
+        elif use_curriculum:
+            raise NotImplementedError
  
         self.critic_coef = config['critic_coef']
         self.grad_norm = config['grad_norm']

@@ -299,8 +299,8 @@ class A2CBuilder(NetworkBuilder):
                 if isinstance(m, nn.Linear):
                     mlp_init(m.weight)
                     if getattr(m, "bias", None) is not None:
-                        torch.nn.init.zeros_(m.bias)    
-
+                        torch.nn.init.zeros_(m.bias)
+                        
             if self.is_continuous:
                 mu_init(self.mu.weight)
                 if self.fixed_sigma:
