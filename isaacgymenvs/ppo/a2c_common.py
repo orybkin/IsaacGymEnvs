@@ -12,8 +12,7 @@ from rl_games.common.interval_summary_writer import IntervalSummaryWriter
 from isaacgymenvs.ppo.diagnostics import DefaultDiagnostics, PpoDiagnostics
 from isaacgymenvs.ppo import model_builder
 from rl_games.interfaces.base_algorithm import BaseAlgorithm
-from isaacgymenvs.learning.curriculum.goid import GOIDGoalSampler
-from isaacgymenvs.learning.curriculum.vds import VDSGoalSampler
+from isaacgymenvs.learning.curriculum import GOIDGoalSampler, VDSGoalSampler, UniformGoalSampler
 from utils.rlgames_utils import Every
 import numpy as np
 import time
@@ -257,12 +256,14 @@ class A2CBase(BaseAlgorithm):
             self.obs_shape = self.observation_space.shape
             
         curriculum_cfg = params['curriculum']
-        use_curriculum = self.vec_env.env.use_curriculum = curriculum_cfg.get('enable', False)
+        use_curriculum = curriculum_cfg.get('enable', False)
         if use_curriculum == 'vds':
             self.vec_env.env.goal_sampler = VDSGoalSampler(
                 self.vec_env.env, curriculum_cfg['vds'], self.run_model, self.algo_name)
         elif use_curriculum == 'goid':
             self.vec_env.env.goal_sampler = GOIDGoalSampler(self.vec_env.env, self.obs_shape, curriculum_cfg['goid'], self.device).to(self.device)
+        elif use_curriculum == 'uniform':
+            self.vec_env.env.goal_sampler = UniformGoalSampler(self.vec_env.env)
         elif use_curriculum:
             raise NotImplementedError
  

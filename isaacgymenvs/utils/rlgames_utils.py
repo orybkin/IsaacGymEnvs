@@ -146,6 +146,7 @@ class RLGPUAlgoObserver(AlgoObserver):
         self.episode_cumulative_avg = dict()
         self.episodic = dict()
         self.episodic_stats = dict()
+        self.curriculum = dict()
         self.videos = []
         self.new_finished_episodes = False
         self.experiment_name = experiment_name
@@ -208,6 +209,10 @@ class RLGPUAlgoObserver(AlgoObserver):
                     self.episodic[key] = []
                 
                 # assert len(done_indices) == data.shape[1]
+                
+        if 'curriculum' in infos:
+            for key, value in infos['curriculum'].items():
+                self.curriculum[key] = value.detach().cpu().numpy()
 
         # turn nested infos into summary keys (i.e. infos['scalars']['lr'] -> infos['scalars/lr']
         if len(infos) > 0 and isinstance(infos, dict):  # allow direct logging from env
@@ -243,6 +248,8 @@ class RLGPUAlgoObserver(AlgoObserver):
             for metric, value in self.episodic_stats.items():
                 for stat, scalar in value.items():
                     self.writer.add_scalar(f'episodic_stats{phase}/{metric}_{stat}', np.mean(scalar), frame)
+            for key, value in self.curriculum.items():
+                self.writer.add_scalar(f'curriculum/{key}', np.mean(value))
             self.episodic_stats = dict()
 
             self.new_finished_episodes = False

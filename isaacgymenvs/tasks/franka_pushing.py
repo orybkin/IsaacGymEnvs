@@ -36,8 +36,7 @@ from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.learning.curriculum.goid import GOIDGoalSampler
-from isaacgymenvs.learning.curriculum.vds import VDSGoalSampler
+from isaacgymenvs.learning.curriculum import GoalSampler, GOIDGoalSampler, VDSGoalSampler, UniformGoalSampler
 
 
 @torch.jit.script
@@ -179,7 +178,6 @@ class FrankaPushing(VecTask):
         self.cmd_limit = to_torch([0.1, 0.1, 0.1, 0.5, 0.5, 0.5], device=self.device).unsqueeze(0) if \
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
         
-        self.use_curriculum = False  # filled in later
         self.goal_sampler = None     # filled in later
 
         # Reset all environments
@@ -263,8 +261,6 @@ class FrankaPushing(VecTask):
         table_stand_asset = self.gym.create_box(self.sim, *[0.2, 0.2, table_stand_height], table_opts)
 
         self.cube_sizes = [0.07] + [0.07] * self.n_cubes_test
-
-        self.ground_height = -0.115 # height at ground (1.06)
 
         # Create cubeA asset
         cube_assets = []
@@ -601,18 +597,12 @@ class FrankaPushing(VecTask):
     
     def reset_idx(self, env_ids=None, mode='train'):
         # FIXME: need to actually overwrite them
-        if self.use_curriculum and mode == 'train':
-            if isinstance(self.goal_sampler, VDSGoalSampler):
-                res_dict = self.goal_sampler.sample_disagreement()
-            elif isinstance(self.goal_sampler, GOIDGoalSampler):
-                res_dict = self.goal_sampler.rejection_sampling()
-            else:
-                raise NotImplementedError
-            
+        if isinstance(self.goal_sampler, GoalSampler) and mode == 'train':
+            res_dict = self.goal_sampler.sample()            
             self.set_state(res_dict['states'])
-            if self.write_fn is not None:
+            if self.write_fn is not None and 'stats' in res_dict:
                 for k, v in res_dict['stats'].items():
-                    self.write_fn(f'info/{k}', v)
+                    self.write_fn(f'curriculum/{k}', v)
             return res_dict['obs']
         else:
             self.reset_idx_helper(env_ids, mode)
@@ -623,9 +613,9 @@ class FrankaPushing(VecTask):
         env_ids_int32 = env_ids.to(dtype=torch.int32)
         
         assert mode in {'train', 'test'}
-        on_table = (not self.use_curriculum or mode == 'test')
+        randomize_z = (self.goal_sampler is None or mode == 'test')
         for j in range(self.n_cubes_test):
-            self._reset_init_cube_state(cube=j, env_ids=env_ids, check_valid=j>0, on_table=on_table)
+            self._reset_init_cube_state(cube=j, env_ids=env_ids, check_valid=j>0, randomize_z=randomize_z)
             # Write these new init states to the sim states
             self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
         self._reset_goal_state(env_ids=env_ids)
@@ -681,6 +671,9 @@ class FrankaPushing(VecTask):
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
+        
+        for _ in range(10):
+            self.gym.simulate(self.sim)
 
     def freeze_cubes(self):
         # TODO this doesn't work with self.test_task
@@ -717,7 +710,7 @@ class FrankaPushing(VecTask):
     def set_state(self, states):
         self.states.update(states)
     
-    def _reset_init_cube_state(self, cube, env_ids, check_valid=True, on_table=True):
+    def _reset_init_cube_state(self, cube, env_ids, check_valid=True, randomize_z=True):
         """
         Simple method to sample @cube's position based on self.startPositionNoise and self.startRotationNoise, and
         automaticlly reset the pose internally. Populates the appropriate self._init_cubeX_state
@@ -729,7 +722,7 @@ class FrankaPushing(VecTask):
             cube(str): Which cube to sample location for. Either 'A' or 'B'
             env_ids (tensor or None): Specific environments to reset cube for
             check_valid (bool): Whether to make sure sampled position is collision-free with the other cube.
-            on_table (bool): Whether to put the cubes on the table (else on the ground)
+            randomize_z (bool): Whether to randomize the z coordinate of the cube.
         """
         # If env_ids is None, we reset all the envs
         if env_ids is None:
@@ -742,15 +735,12 @@ class FrankaPushing(VecTask):
         this_cube_state_all = self._init_cube_states[cube]
 
         # Sampling is "centered" around middle of table
-        center = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
+        table_center = torch.tensor(self._table_surface_pos[:3], device=self.device, dtype=torch.float32)
 
-        if on_table:
-            # Set z value, which is fixed height
-            center[2] = center[2] + 0.15
-            if self.mode == 'easy':
-                center[2] = center[2] - 0.1
-        else:
-            center[2] = self.ground_height
+        # Set z value, which is fixed height
+        table_center[2] = table_center[2] + 0.15
+        if self.mode == 'easy':
+            table_center[2] = table_center[2] - 0.1
 
         # Initialize rotation, which is no rotation (quat w = 1)
         sampled_cube_state[:, 6] = 1.0
@@ -771,7 +761,7 @@ class FrankaPushing(VecTask):
             num_active_idx = len(active_idx)
             for i in range(100):
                 # Sample x y values
-                sampled_cube_state[active_idx, :3] = center + \
+                sampled_cube_state[active_idx, :3] = table_center + \
                                                      2.0 * self.start_position_noise * (
                                                              torch.rand_like(sampled_cube_state[active_idx, :3]) - 0.5)
                 # Check if sampled values are valid
@@ -788,26 +778,28 @@ class FrankaPushing(VecTask):
             
         else:
             # We just directly sample
-            sampled_cube_state[:, :3] = center.unsqueeze(0) + \
+            sampled_cube_state[:, :3] = table_center.unsqueeze(0) + \
                                               2.0 * self.start_position_noise * (
-                                                      torch.rand(num_resets, 3, device=self.device) - 0.5)
+                                                      torch.rand(num_resets, 3, device=self.device) - 0.5)                                       
     
         if not self.test:
+            if randomize_z:
+                sampled_cube_state[:, 2] = table_center[2]  
             # remove extra cubes
             if cube >= self.n_cubes_train:
                 off = np.array([0.3, 0.3, -0.115])
                 for i in range(3):
-                    sampled_cube_state[:, i] = center[i] + off[i]
+                    sampled_cube_state[:, i] = table_center[i] + off[i]
 
         if self.test:
             for t in range(min(len(self.tasks), sampled_cube_state.shape[0])):
                 for i in range(3):
-                    sampled_cube_state[t, i] = center[i] + self.tasks[t]['cubes'][cube][i]
+                    sampled_cube_state[t, i] = table_center[i] + self.tasks[t]['cubes'][cube][i]
 
         # Test specific task
         if self.test_task >=0 and self.test:
             for i in range(3):
-                sampled_cube_state[:, i] = center[i] + self.tasks[self.test_task]['cubes'][cube][i]
+                sampled_cube_state[:, i] = table_center[i] + self.tasks[self.test_task]['cubes'][cube][i]
 
         # Sample rotation value
         if not self.test and self.start_rotation_noise > 0:
@@ -822,7 +814,7 @@ class FrankaPushing(VecTask):
     def define_tasks(self):
         n_tasks = 16
         self.tasks = tasks = [None] * n_tasks 
-        height = self.ground_height
+        height = -0.115 # height at ground (1.06)
         center = np.array([.0, .0, height])
         left = np.array([.0, -.08, height])
         right = np.array([.0, .08, height])
@@ -1013,6 +1005,9 @@ class FrankaPushing(VecTask):
         # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
+            if isinstance(self.goal_sampler, GOIDGoalSampler) and not self.test:
+                goid_loss = self.goal_sampler.train(self.obs_buf, metrics[self.goal_sampler.success_metric].float().unsqueeze(1))
+                self.extras["curriculum"] = {'goid_loss': goid_loss}
             self.reset_idx(env_ids)
         # debug viz
         # if self.viewer and self.debug_viz:
