@@ -598,12 +598,11 @@ class FrankaPushing(VecTask):
     def reset_idx(self, env_ids=None, mode='train'):
         # FIXME: need to actually overwrite them
         if isinstance(self.goal_sampler, GoalSampler) and mode == 'train':
-            res_dict = self.goal_sampler.sample()            
+            res_dict = self.goal_sampler.sample()
             self.set_state(res_dict['states'])
             if self.write_fn is not None and 'stats' in res_dict:
                 for k, v in res_dict['stats'].items():
                     self.write_fn(f'curriculum/{k}', v)
-            return res_dict['obs']
         else:
             self.reset_idx_helper(env_ids, mode)
         
@@ -672,8 +671,9 @@ class FrankaPushing(VecTask):
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         
-        for _ in range(10):
-            self.gym.simulate(self.sim)
+        if isinstance(self.goal_sampler, GoalSampler):
+            for _ in range(10):
+                self.gym.simulate(self.sim)
 
     def freeze_cubes(self):
         # TODO this doesn't work with self.test_task
@@ -783,7 +783,7 @@ class FrankaPushing(VecTask):
                                                       torch.rand(num_resets, 3, device=self.device) - 0.5)                                       
     
         if not self.test:
-            if randomize_z:
+            if not randomize_z:
                 sampled_cube_state[:, 2] = table_center[2]  
             # remove extra cubes
             if cube >= self.n_cubes_train:

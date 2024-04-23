@@ -21,11 +21,12 @@ class UniformGoalSampler(GoalSampler):
         states, obs = self.env.sample_goals(1)
         return {'states': states[0], 'obs': obs[0]}
 
-class GOIDGoalSampler(GoalSampler):
+class GOIDGoalSampler(nn.Module, GoalSampler):
     builder = NetworkBuilder.BaseNetwork()
     
     def __init__(self, env, obs_dim, cfg, device):
-        super().__init__(env)
+        nn.Module.__init__(self)
+        GoalSampler.__init__(self, env)
         
         self.obs_dim = np.prod(obs_dim)
         self.device = device
