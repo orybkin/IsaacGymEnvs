@@ -7,8 +7,9 @@ from scipy.stats import entropy
 from isaacgymenvs.ppo.network_builder import NetworkBuilder
 
 class GoalSampler:
-    def __init__(self, env):
+    def __init__(self, env, requires_extra_sim=0):
         self.env = env
+        self.requires_extra_sim = requires_extra_sim
         
     def sample(self):
         raise NotImplementedError
@@ -26,7 +27,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
     
     def __init__(self, env, obs_dim, cfg, device):
         nn.Module.__init__(self)
-        GoalSampler.__init__(self, env)
+        GoalSampler.__init__(self, env, requires_extra_sim=10)
         
         self.obs_dim = np.prod(obs_dim)
         self.device = device
@@ -125,7 +126,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
         
 class VDSGoalSampler(GoalSampler):
     def __init__(self, env, cfg, model_runner, algo_name):
-        super().__init__()
+        super().__init__(env, requires_extra_sim=10)
         self.model_runner = model_runner
         self.algo_name = algo_name
         self.temperature = cfg.get('temperature', 1)
@@ -154,7 +155,7 @@ class VDSGoalSampler(GoalSampler):
             else:
                 raise NotImplementedError
         disagreement = self.disagreement_fn(values).detach().cpu().numpy()  # (num_envs, n_candidates)
-        disagreement = np.exp(np.log(disagreement) * self.temperature)
+        disagreement = disagreement ** self.temperature
         sum_disagreement = np.sum(disagreement, axis=1, keepdims=True)
         if np.allclose(sum_disagreement, 0):
             disagreement = None

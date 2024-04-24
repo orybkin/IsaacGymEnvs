@@ -582,8 +582,8 @@ class A2CBase(BaseAlgorithm):
                 rewards = np.expand_dims(rewards, axis=1)
             return self.obs_to_tensors(obs), torch.from_numpy(rewards).to(self.ppo_device).float(), torch.from_numpy(dones).to(self.ppo_device), infos
 
-    def env_reset(self, **kwargs):
-        obs = self.vec_env.reset(**kwargs)
+    def env_reset(self):
+        obs = self.vec_env.reset()
         obs = self.obs_to_tensors(obs)
         return obs
 
@@ -1097,7 +1097,7 @@ class DiscreteA2CBase(A2CBase):
         total_time = 0
         rep_count = 0
         # self.frame = 0  # loading from checkpoint
-        self.obs = self.env_reset(mode='train')
+        self.obs = self.env_reset()
 
         if self.multi_gpu:
             torch.cuda.set_device(self.local_rank)
@@ -1444,7 +1444,7 @@ class ContinuousA2CBase(A2CBase):
         self.vec_env.env.test = True
         if render:
             self.vec_env.env.override_render = True
-        self.env_reset(mode='test')
+        self.env_reset()
         cut = self.vec_env.env.max_pix
 
         update_list = self.update_list
@@ -1474,7 +1474,7 @@ class ContinuousA2CBase(A2CBase):
         self.vec_env.env.test = False
         if render:
             self.vec_env.env.override_render = False
-        self.env_reset(mode='test')
+        self.env_reset()
 
     def train(self):
         self.init_tensors()
@@ -1482,7 +1482,7 @@ class ContinuousA2CBase(A2CBase):
         start_time = time.time()
         total_time = 0
         rep_count = 0
-        self.obs = self.env_reset(mode='train')
+        self.obs = self.env_reset()
         self.curr_frames = self.batch_size_envs
         self.vec_env.env.start_epoch_num = self.epoch_num
         test_check = Every(self.test_every_episodes * self.vec_env.env.max_episode_length)
