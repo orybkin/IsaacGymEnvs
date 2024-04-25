@@ -753,7 +753,7 @@ class FrankaPushing(VecTask):
         if not self.test:
             # remove extra cubes
             if cube >= self.n_cubes_train:
-                off = np.array([0.3, 0.3, -0.115])
+                off = np.array([0.0, 0.0, -0.2])
                 for i in range(3):
                     sampled_cube_state[:, i] = table_center[i] + off[i]
 
