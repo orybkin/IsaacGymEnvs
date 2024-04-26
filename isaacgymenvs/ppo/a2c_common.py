@@ -1229,18 +1229,8 @@ class ContinuousA2CBase(A2CBase):
         # Relabel states
         obs = relabeled_buffer.tensor_dict['obses']
         # compute episode idx
-        idx = relabeled_buffer.tensor_dict['dones']
-        present, first_idx = idx.max(0)
-        first_idx[present == 0] = self.horizon_length - 1
-        idx = idx.flip(0).cumsum(0).flip(0)
-        idx = idx[[0]] - idx
-        # Compute last frame idx
-        ep_len = env.max_episode_length
-        idx = idx * ep_len + first_idx[None, :]
-        idx = torch.minimum(idx, (obs.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
-        goal = obs[:, :, env.target_idx]
-        idx = idx.repeat(1, 1, goal.shape[2])
-        goal = torch.gather(goal, 0, idx)
+        idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
+        goal = torch.gather(obs[:, :, env.target_idx], 0, idx)
         relabeled_buffer.tensor_dict['obses'][:, :, 7:10] = goal
         target_pos = relabeled_buffer.tensor_dict['obses'][..., env.target_idx]
 
@@ -1250,17 +1240,8 @@ class ContinuousA2CBase(A2CBase):
         goal = torch.cat([goal[1:], last_obs['obs'][None, :, 7:10]], 0)
         target_pos = torch.cat([target_pos[1:], last_obs['obs'][None, :, env.target_idx]], 0)
 
-        # Run model - do it in slices to conserve memory
-        n_slices = min(16, obs.shape[0])
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
-        obs = relabeled_buffer.tensor_dict['obses'].reshape([n_slices, -1] + list(obs.shape[1:]))
-        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
-        res_dict = {}
-        for k in res_dicts[0]:
-            if k in relabeled_buffer.tensor_dict:
-                res_dict[k] = torch.stack([d[k] for d in res_dicts], 0).reshape(self.horizon_length, self.num_actors, -1)
-        res_dict.pop('actions')
-        res_dict['neglogpacs'] = self.model.neglogp(relabeled_buffer.tensor_dict['actions'], res_dict['mus'], res_dict['sigmas'], torch.log(res_dict['sigmas']))
+        res_dict = self.run_model_in_slices(obs, relabeled_buffer.tensor_dict['actions'], relabeled_buffer.tensor_dict.keys())
         relabeled_buffer.tensor_dict.update(res_dict)
 
         # Rewards
@@ -1283,6 +1264,34 @@ class ContinuousA2CBase(A2CBase):
         relabeled_batch['played_frames'] = self.batch_size
 
         return relabeled_buffer, relabeled_batch
+
+    def run_model_in_slices(self, obs, actions, out_list, n_slices=None):
+        # Conserves memory
+        if n_slices is None: n_slices = min(16, obs.shape[0])
+
+        obs = obs.reshape([n_slices, -1] + list(obs.shape[1:]))
+        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
+        res_dict = {}
+        for k in res_dicts[0]:
+            if k in out_list:
+                res_dict[k] = torch.stack([d[k] for d in res_dicts], 0).reshape(self.horizon_length, self.num_actors, -1)
+        res_dict.pop('actions')
+        res_dict['neglogpacs'] = self.model.neglogp(actions, res_dict['mus'], res_dict['sigmas'], torch.log(res_dict['sigmas']))
+                                                     
+        return res_dict
+
+    def get_relabel_idx(self, env, dones):
+        idx = dones
+        present, first_idx = idx.max(0)
+        first_idx[present == 0] = self.horizon_length - 1
+        idx = idx.flip(0).cumsum(0).flip(0)
+        idx = idx[[0]] - idx
+        # Compute last frame idx
+        ep_len = env.max_episode_length
+        idx = idx * ep_len + first_idx[None, :]
+        idx = torch.minimum(idx, (dones.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
+        idx = idx.repeat(1, 1, len(env.target_idx))
+        return idx
 
     def train_epoch(self):
         super().train_epoch()
@@ -1398,8 +1407,9 @@ class ContinuousA2CBase(A2CBase):
                     self.diagnostics.add(f'diagnostics/advantage_std{identifier}', advantages.std())
                     advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
             
-                self.diagnostics.add(f'diagnostics/rms_value_mean{identifier}', self.value_mean_std.running_mean)
-                self.diagnostics.add(f'diagnostics/rms_value_std{identifier}', math.sqrt(self.value_mean_std.running_var))
+                if self.normalize_value:
+                    self.diagnostics.add(f'diagnostics/rms_value_mean{identifier}', self.value_mean_std.running_mean)
+                    self.diagnostics.add(f'diagnostics/rms_value_std{identifier}', math.sqrt(self.value_mean_std.running_var))
 
         dataset_dict = {}
         dataset_dict['old_values'] = values
