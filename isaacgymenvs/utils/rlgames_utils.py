@@ -266,7 +266,8 @@ class RLGPUAlgoObserver(AlgoObserver):
                 imageio.imwrite(osp.join(save_dir, f'eval_end{phase}_{epoch_num}.png'), get_frame(-1))
 
                 if wandb.run is not None:
-                    wandb.log({'execution' + phase: [wandb.Video(np.stack(self.videos, 1) * 255, fps=10, format="mp4")]})
+                    # wandb.log({'execution' + phase: [wandb.Video(np.stack(self.videos, 1) * 255, fps=10, format="mp4")]})
+                    wandb.log({'execution' + phase: [wandb.Video(np.stack(self.videos, 1) * 255, format="gif")]})
                     wandb.log({'start' + phase: [wandb.Image(get_frame(10))]})
                     wandb.log({'end' + phase: [wandb.Image(get_frame(-1))]})
                 self.videos = []
