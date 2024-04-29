@@ -255,18 +255,19 @@ class A2CBase(BaseAlgorithm):
         else:
             self.obs_shape = self.observation_space.shape
             
-        curriculum_cfg = params['curriculum']
-        use_curriculum = curriculum_cfg.get('enable', False)
-        if use_curriculum == 'vds':
+        self.curriculum_cfg = params['curriculum']
+        self.use_curriculum = self.curriculum_cfg.get('enable', False)
+        if self.use_curriculum == 'vds':
             self.vec_env.env.goal_sampler = VDSGoalSampler(
-                self.vec_env.env, curriculum_cfg['vds'], self.run_model, self.algo_name)
-        elif use_curriculum == 'goid':
-            self.vec_env.env.goal_sampler = GOIDGoalSampler(self.vec_env.env, self.obs_shape, curriculum_cfg['goid'], self.device).to(self.device)
-        elif use_curriculum == 'uniform':
+                self.vec_env.env, self.curriculum_cfg['vds'], self.run_model, self.algo_name)
+        elif self.use_curriculum == 'goid':
+            self.vec_env.env.goal_sampler = GOIDGoalSampler(self.vec_env.env, self.obs_shape, self.curriculum_cfg['goid'], self.device).to(self.device)
+        elif self.use_curriculum == 'uniform':
             self.vec_env.env.goal_sampler = UniformGoalSampler(self.vec_env.env)
-        elif use_curriculum:
-            raise NotImplementedError
+        elif self.use_curriculum:
+            raise ValueError
  
+        self.critic_loss_mode = config['critic_loss_mode']
         self.critic_coef = config['critic_coef']
         self.grad_norm = config['grad_norm']
         self.gamma = self.config['gamma']
@@ -503,6 +504,11 @@ class A2CBase(BaseAlgorithm):
             'use_action_masks' : self.use_action_masks
         }
         self.experience_buffer = ExperienceBuffer(self.env_info, algo_info, self.ppo_device)
+        
+        if self.use_curriculum == 'goid':
+            # self.vec_env.env.goid_buffer = GoidBuffer(
+            #     self.env_info, algo_info, self.ppo_device, batch_size=self.curriculum_cfg['goid']['config']['batch_size'])
+            self.vec_env.env.experience_buffer = self.experience_buffer
 
         algo_info = {
             'num_actors' : self.vec_env.env.max_pix,

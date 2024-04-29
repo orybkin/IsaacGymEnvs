@@ -36,7 +36,7 @@ from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.learning.curriculum import GoalSampler, GOIDGoalSampler, VDSGoalSampler, UniformGoalSampler
+from isaacgymenvs.learning.curriculum import GoalSampler, GOIDGoalSampler
 
 
 @torch.jit.script
@@ -185,7 +185,9 @@ class FrankaPushing(VecTask):
 
         # Refresh tensors
         self._refresh()
-                
+        
+        self.goid_counter = 0
+
 
     def create_sim(self):
         self.sim_params.up_axis = gymapi.UP_AXIS_Z
@@ -596,15 +598,23 @@ class FrankaPushing(VecTask):
         return self.obs_dict
     
     def reset_idx(self, env_ids=None):
-        if not self.test and isinstance(self.goal_sampler, GoalSampler):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        if False: #not self.test and isinstance(self.goal_sampler, GoalSampler):
             res_dict = self.goal_sampler.sample()
-            self.set_state(res_dict['states'])
-            if self.write_fn is not None and 'stats' in res_dict:
-                for k, v in res_dict['stats'].items():
-                    self.write_fn(f'curriculum/{k}', v)
+            # self.set_state(res_dict['states'])
+            # self.update_cube_states(env_ids)
+            # if self.write_fn is not None and 'stats' in res_dict:
+            #     for k, v in res_dict['stats'].items():
+            #         self.write_fn(f'curriculum/{k}', v)
         else:
             self.reset_idx_cubes_goals(env_ids)
             self.reset_idx_agent(env_ids)
+        cube_zs = self._cube_states[0][:,2]
+        cube_z_mean = cube_zs.mean()
+        cube_z_sd = cube_zs.std()
+        print('debug cube z mean:', cube_z_mean)
+        print('debug cube z sd:', cube_z_sd)
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         
@@ -618,16 +628,18 @@ class FrankaPushing(VecTask):
             # Write these new init states to the sim states
             self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
         self._reset_goal_state(env_ids=env_ids)
-        
+        self.update_cube_states(env_ids)
+
+        if isinstance(self.goal_sampler, GoalSampler):
+            for _ in range(self.goal_sampler.requires_extra_sim):
+                self.gym.simulate(self.sim)
+
+    def update_cube_states(self, env_ids):
         # Update cube states
         multi_env_ids_cubes_int32 = self._global_indices[env_ids, -(1 + self.n_cubes_test):].flatten()
         self.gym.set_actor_root_state_tensor_indexed(
             self.sim, gymtorch.unwrap_tensor(self._root_state),
             gymtorch.unwrap_tensor(multi_env_ids_cubes_int32), len(multi_env_ids_cubes_int32))
-        
-        if isinstance(self.goal_sampler, GoalSampler):
-            for _ in range(self.goal_sampler.requires_extra_sim):
-                self.gym.simulate(self.sim)
 
     def reset_idx_agent(self, env_ids=None):
         if env_ids is None:
@@ -700,7 +712,7 @@ class FrankaPushing(VecTask):
                         self.gym.set_rigid_body_color(self.envs[t], id, n, gymapi.MESH_VISUAL, cube_colors[i])
 
     def sample_goals(self, n_candidates):
-        """Uniformly samples goals"""
+        """Samples n_candidates goals via reset"""
         states, obses = [], []
         self.reset_idx_agent()
         for _ in range(n_candidates):
@@ -1008,8 +1020,22 @@ class FrankaPushing(VecTask):
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
             if isinstance(self.goal_sampler, GOIDGoalSampler) and not self.test:
-                goid_loss = self.goal_sampler.train(self.obs_buf, metrics[self.goal_sampler.success_metric].float().unsqueeze(1))
-                self.extras["curriculum"] = {'goid_loss': goid_loss}
+                save_dir = 'data/goid'
+                os.makedirs(save_dir, exist_ok=True)
+                obs_batch = self.experience_buffer.tensor_dict['obses'][0]
+                success_batch = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
+                # self.goid_buffer.update_data_auto('obses', self.experience_buffer.tensor_dict['obses'][0], increment=False)
+                # self.goid_buffer.update_data_auto('success', metrics[self.goal_sampler.success_metric].float(), increment=True)
+                self.goid_counter += 1
+                # obs_batch = self.goid_buffer.tensor_dict['obses']
+                # success_batch = self.goid_buffer.tensor_dict['success']
+                np.save(f'{save_dir}/obs{self.goid_counter}', obs_batch.cpu().numpy())
+                np.save(f'{save_dir}/success{self.goid_counter}', success_batch.cpu().numpy())
+                self.extras["curriculum"] = {
+                    'goid_epochs': self.goid_counter,
+                    **self.goal_sampler.train(obs_batch, success_batch)
+                }
+            
             self.reset_idx(env_ids)
         # debug viz
         # if self.viewer and self.debug_viz:

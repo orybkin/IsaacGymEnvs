@@ -212,7 +212,12 @@ class RLGPUAlgoObserver(AlgoObserver):
                 
         if 'curriculum' in infos:
             for key, value in infos['curriculum'].items():
-                self.curriculum[key] = value.detach().cpu().numpy()
+                if isinstance(value, torch.Tensor):
+                    if value.requires_grad_:
+                        value = value.detach()
+                    self.curriculum[key] = value.cpu().numpy()
+                else:
+                    self.curriculum[key] = value
 
         # turn nested infos into summary keys (i.e. infos['scalars']['lr'] -> infos['scalars/lr']
         if len(infos) > 0 and isinstance(infos, dict):  # allow direct logging from env

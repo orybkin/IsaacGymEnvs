@@ -66,7 +66,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
                     nn.init.zeros_(m.bias)
 
         self.lr = cfg['config']['learning_rate']
-        self.batch_size = cfg['config']['batch_size']
+        self.gradient_steps = cfg['config']['gradient_steps']
         self.optimizer = optim.Adam(self.model.parameters(), self.lr)
         self.loss_fn = nn.BCELoss()
         
@@ -76,12 +76,36 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
     def train(self, obs_batch, success_batch):
         self.model.train()
         assert len(obs_batch) == len(success_batch)
-        preds = self(obs_batch)
-        loss = torch.autograd.Variable(self.loss_fn(preds, success_batch), requires_grad=True)
-        self.optimizer.zero_grad()
-        loss.backward()
-        self.optimizer.step()
-        return loss
+        obs_batch.requires_grad_ = True
+        train_loss = train_accuracy = eval_loss = eval_accuracy = None
+        for i in range(self.gradient_steps):
+            out = self(obs_batch)
+            accuracy = torch.mean(((out >= 0.5).float() == success_batch).float())
+            loss = self.loss_fn(out, success_batch)
+            if i == 0:
+                eval_accuracy = accuracy
+                eval_loss = loss
+            if i == self.gradient_steps - 1:
+                train_accuracy = accuracy
+                train_loss = loss
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            
+        return {
+            'goid_eval_accuracy': eval_accuracy,
+            'goid_eval_loss': eval_loss,
+            'goid_train_accuracy': train_accuracy,
+            'goid_train_loss': train_loss,
+        }
+        
+    def eval(self, obs_batch, success_batch):
+        self.model.eval()
+        with torch.no_grad():
+            out = self(obs_batch)
+            accuracy = torch.mean(((out >= 0.5).float() == success_batch).float())
+            loss = self.loss_fn(out, success_batch)
+        return {'goid_eval_accuracy': accuracy, 'goid_eval_loss': loss}
     
     def sample(self):
         self.model.eval()
@@ -177,8 +201,7 @@ class VDSGoalSampler(GoalSampler):
             disagreement = np.mean(disagreement, axis=0)
             d_mean = np.mean(disagreement)
             d_std = np.std(disagreement)
-            _, d_counts = np.unique(disagreement, return_counts=True)
-            d_entropy = entropy(d_counts, base=2)
+            d_entropy = entropy(disagreement, base=2)
             d_max_entropy = np.log2(len(disagreement))
         
         return {
