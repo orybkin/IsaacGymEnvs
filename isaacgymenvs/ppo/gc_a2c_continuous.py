@@ -1,5 +1,5 @@
 from isaacgymenvs.ppo import a2c_continuous, a2c_common
-from isaacgymenvs.ppo.a2c_common import awr_loss
+from isaacgymenvs.ppo.a2c_common import awr_loss, bc_loss
 from rl_games.algos_torch import torch_ext
 from rl_games.algos_torch import central_value
 from rl_games.common import common_losses
@@ -15,21 +15,26 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
         super().__init__(base_name, params)
 
         self.algo = self.config.get('algo', 'ppo')
-        self.joint_value_norm = self.config.get('joint_value_norm', True)
         if self.algo == 'pawr':
             self.actor_loss_func = [None, None]
             self.actor_loss_func[0] = common_losses.actor_loss
             self.actor_loss_func[1] = partial(awr_loss, temperature=self.config['awr_temperature'])
         else:
             self.actor_loss_func = [self.actor_loss_func, self.actor_loss_func]
+        # self.actor_loss_func[1] = bc_loss
         self.awr_coef = self.config.get('awr_coef', 1.0)
+        self.awr_critic_coef = self.config.get('awr_critic_coef', 1.0)
+        self.awr_actor_coef = self.config.get('awr_actor_coef', 1.0)
 
     def train_actor_critic(self, original_dict, relabeled_dict):
         loss = [0, 0]
-        a_loss_coef = [1.0, self.awr_coef]
+        loss_coef = [1.0, self.awr_coef]
+        loss_critic_coef = [1.0, self.awr_critic_coef]
+        loss_actor_coef = [1.0, self.awr_actor_coef]
         losses_dict = {}
         diagnostics = {}
         for i, input_dict in enumerate([original_dict, relabeled_dict]):
+            # if i == 0: continue
             value_preds_batch = input_dict['old_values']
             old_action_log_probs_batch = input_dict['old_logp_actions']
             advantage = input_dict['advantages']
@@ -74,7 +79,10 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
                 a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
 
-                loss[i] = a_loss * a_loss_coef[i] + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+                loss[i] = loss_coef[i] * (a_loss * loss_actor_coef[i]
+                                            + c_loss * loss_critic_coef[i] * self.critic_coef
+                                            - entropy * self.entropy_coef
+                                            + b_loss * self.bounds_loss_coef)
                 from torch.nn import functional
                 torch.nn.functional.linear
                 if self.multi_gpu:
@@ -98,6 +106,8 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 f'clipped_fraction{identifier}': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach(),
                 f'clipped_value_fraction{identifier}': clip_value_frac,
             })
+
+            # print(f'values train {identifier}: {values.mean().item():.3f}')
 
         self.scaler.scale(loss[0] + loss[1]).backward()
         #TODO: Refactor this ugliest code of the year
