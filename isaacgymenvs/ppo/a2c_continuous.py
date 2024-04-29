@@ -121,7 +121,13 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
                 c_losses = torch.zeros(full_values.shape[1], device=self.ppo_device)
             
             ci_losses = c_losses.mean(dim=0)
-            c_loss = ci_losses.sum()
+            if self.critic_loss_mode == 'mean':
+                c_loss = ci_losses.mean()
+            elif self.critic_loss_mode == 'sum':
+                c_loss = ci_losses.sum()
+            else:
+                raise ValueError
+            
             if self.bound_loss_type == 'regularisation':
                 b_loss = self.reg_loss(mu)
             elif self.bound_loss_type == 'bound':
