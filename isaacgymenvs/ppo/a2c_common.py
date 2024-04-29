@@ -1243,7 +1243,22 @@ class ContinuousA2CBase(A2CBase):
 
     def relabel_batch(self, buffer):
         env = self.vec_env.env
-        relabeled_buffer = copy.deepcopy(buffer)
+
+        if not hasattr(self, 'expert_buffer'):
+            # Load data
+            file = 'runs/240429-115322-052131_awr_sparse_256_1cube_restart/'
+            print('Loading data from ' + file)
+            # file = 'runs/240318-142454-231687_ppo_6cubes_f'
+            obses = dict(np.load(file + '/buffer_obses.npz', allow_pickle=True))['arr_0']
+            data = dict(np.load(file + '/buffer.npz', allow_pickle=True))['arr_0'].item()
+
+            self.expert_buffer = copy.deepcopy(buffer) 
+            self.expert_buffer.tensor_dict['obses'] = torch.Tensor(obses).cuda()
+            self.expert_buffer.tensor_dict['actions'] = torch.Tensor(data['actions']).cuda()
+            self.expert_buffer.tensor_dict['rewards'] = torch.Tensor(data['rewards']).cuda()
+            self.expert_buffer.tensor_dict['dones'] = torch.Tensor(data['dones']).byte().cuda()
+            print('Loaded data!')
+        relabeled_buffer = self.expert_buffer
 
         # relabeled_buffer.tensor_dict['obses'] = relabeled_buffer.tensor_dict['obses'].flip(1) 
         # relabeled_buffer.tensor_dict['dones'] = relabeled_buffer.tensor_dict['dones'].flip(1) 
@@ -1358,6 +1373,14 @@ class ContinuousA2CBase(A2CBase):
                 batch_dict = self.play_steps_rnn()
             else:
                 batch_dict = self.play_steps()
+
+        if False:
+            # Save buffer
+            cpu_buffer_dict = dict(map(lambda x: (x[0], x[1].cpu().numpy()) if isinstance(x[1], torch.Tensor) else x, self.experience_buffer.tensor_dict.items()))
+            np.savez(self.experiment_dir + '/buffer.npz', {'actions': cpu_buffer_dict['actions'], 'rewards': cpu_buffer_dict['rewards'], 'dones': cpu_buffer_dict['dones']})
+            np.savez(self.experiment_dir + '/buffer_obses.npz', cpu_buffer_dict['obses'])
+            print('Saved replay buffer to ' + self.experiment_dir + '/buffer.npz')
+            import pdb; pdb.set_trace()
 
         play_time_end = time.time()
         update_time_start = time.time()

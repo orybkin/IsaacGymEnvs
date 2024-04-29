@@ -21,7 +21,7 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
             self.actor_loss_func[1] = partial(awr_loss, temperature=self.config['awr_temperature'])
         else:
             self.actor_loss_func = [self.actor_loss_func, self.actor_loss_func]
-        # self.actor_loss_func[1] = bc_loss
+        self.actor_loss_func[1] = bc_loss
         self.awr_coef = self.config.get('awr_coef', 1.0)
         self.awr_critic_coef = self.config.get('awr_critic_coef', 1.0)
         self.awr_actor_coef = self.config.get('awr_actor_coef', 1.0)
