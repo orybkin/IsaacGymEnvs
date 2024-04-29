@@ -1255,6 +1255,21 @@ class ContinuousA2CBase(A2CBase):
 
         # Relabel states
         obs = relabeled_buffer.tensor_dict['obses']
+        import pdb; pdb.set_trace()
+
+        # Only use the data where 
+        mask = (torch.linalg.norm(obs[-1, :, 14:16] - obs[1, :, 14:16], dim=-1) < 0.3)
+        mask = mask & (torch.linalg.norm(obs[-1, :, 14:16] - obs[1, :, 14:16], dim=-1) > 0.01)
+        # TODO: how?
+
+        # obs[-1, :, 14] - obs[1, :, 14]
+        # import matplotlib.pyplot as plt
+        # plt.hist((obs[-1, :, 14] - obs[1, :, 14]).cpu(), 100, [-0.2, 0.2])
+        # # plt.xlim(-0.5, 0.5)
+        # plt.yscale('log')
+        # plt.savefig('hist.png')
+
+
         # compute episode idx
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
         goal = torch.gather(obs[:, :, env.target_idx], 0, idx)
@@ -1336,17 +1351,21 @@ class ContinuousA2CBase(A2CBase):
         return res_dict
 
     def get_relabel_idx(self, env, dones):
-        idx = dones
-        present, first_idx = idx.max(0)
-        first_idx[present == 0] = self.horizon_length - 1
-        idx = idx.flip(0).cumsum(0).flip(0)
-        idx = idx[[0]] - idx
-        # Compute last frame idx
-        ep_len = env.max_episode_length
-        idx = idx * ep_len + first_idx[None, :]
-        idx = torch.minimum(idx, (dones.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
-        idx = idx.repeat(1, 1, len(env.target_idx))
-        return idx
+        # idx = dones
+        # present, first_idx = idx.max(0)
+        # first_idx[present == 0] = self.horizon_length - 1
+        # idx = idx.flip(0).cumsum(0).flip(0)
+        # idx = idx[[0]] - idx
+        # # Compute last frame idx
+        # ep_len = env.max_episode_length
+        # idx = idx * ep_len + first_idx[None, :]
+        # idx = torch.minimum(idx, (dones.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
+        # idx = idx.repeat(1, 1, len(env.target_idx))
+        steps = dones.shape[0]
+        add = 10
+        idx = torch.arange(steps)[:, None, None].repeat(1, dones.shape[1], len(env.target_idx)) + add
+        idx[idx >= steps] = steps - 1
+        return idx.cuda()
 
     def train_epoch(self):
         super().train_epoch()
