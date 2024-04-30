@@ -1255,21 +1255,6 @@ class ContinuousA2CBase(A2CBase):
 
         # Relabel states
         obs = relabeled_buffer.tensor_dict['obses']
-        import pdb; pdb.set_trace()
-
-        # Only use the data where 
-        mask = (torch.linalg.norm(obs[-1, :, 14:16] - obs[1, :, 14:16], dim=-1) < 0.3)
-        mask = mask & (torch.linalg.norm(obs[-1, :, 14:16] - obs[1, :, 14:16], dim=-1) > 0.01)
-        # TODO: how?
-
-        # obs[-1, :, 14] - obs[1, :, 14]
-        # import matplotlib.pyplot as plt
-        # plt.hist((obs[-1, :, 14] - obs[1, :, 14]).cpu(), 100, [-0.2, 0.2])
-        # # plt.xlim(-0.5, 0.5)
-        # plt.yscale('log')
-        # plt.savefig('hist.png')
-
-
         # compute episode idx
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
         goal = torch.gather(obs[:, :, env.target_idx], 0, idx)
