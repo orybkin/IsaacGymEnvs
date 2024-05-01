@@ -63,6 +63,9 @@ class GCA2CAgent(a2c_continuous.A2CAgent):
                 entropy = res_dict['entropy']
                 mu = res_dict['mus']
                 sigma = res_dict['sigmas']
+                if i == 1:
+                    # Only train the mean not the variance
+                    action_log_probs = self.model.neglogp(batch_dict['prev_actions'], mu, sigma.detach(), torch.log(sigma.detach()))
 
                 a_loss = self.actor_loss_func[i](old_action_log_probs_batch, action_log_probs, advantage, self.ppo, self.e_clip)
 
