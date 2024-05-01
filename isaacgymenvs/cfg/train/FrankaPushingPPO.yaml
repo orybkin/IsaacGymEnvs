@@ -99,6 +99,8 @@ params:
         regularizer:
           name: None
       config:
+        batch_size: 256
         gradient_steps: 10
         learning_rate: 5e-4
         success_metric: success_4
+        collect_data: False

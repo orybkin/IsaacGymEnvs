@@ -153,7 +153,7 @@ class A2CBase(BaseAlgorithm):
         else:
             self.vec_env = config.get('vec_env', None)
 
-        self.ppo_device = config.get('device', 'cuda:0')
+        self.ppo_device = self.vec_env.env.ppo_device = config.get('device', 'cuda:0')
         self.value_size = self.env_info.get('value_size',1)
         self.observation_space = self.env_info['observation_space']
         self.weight_decay = config.get('weight_decay', 0.0)
@@ -799,7 +799,8 @@ class A2CBase(BaseAlgorithm):
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
-                res_dict = self.run_model(self.obs)
+                with torch.no_grad():
+                    res_dict = self.run_model(self.obs)
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
 
@@ -884,7 +885,8 @@ class A2CBase(BaseAlgorithm):
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
-                res_dict = self.run_model(self.obs)
+                with torch.no_grad():
+                    res_dict = self.run_model(self.obs)
 
             self.rnn_states = res_dict['rnn_states']
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
@@ -1309,11 +1311,10 @@ class ContinuousA2CBase(A2CBase):
 
         self.set_eval()
         play_time_start = time.time()
-        with torch.no_grad():
-            if self.is_rnn:
-                batch_dict = self.play_steps_rnn()
-            else:
-                batch_dict = self.play_steps()
+        if self.is_rnn:
+            batch_dict = self.play_steps_rnn()
+        else:
+            batch_dict = self.play_steps()
 
         play_time_end = time.time()
         update_time_start = time.time()

@@ -36,6 +36,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
         self.intermediate_upper = cfg['intermediate'].get('upper', 0.9)
         self.max_sample_attempts = cfg['intermediate'].get('max_sample_attempts', 10)
         self.success_metric = cfg['config']['success_metric']
+        self.collect_data = cfg['config']['collect_data']
         
         self.units = cfg['mlp']['units']
         self.activation = cfg['mlp']['activation']
@@ -67,6 +68,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
 
         self.lr = cfg['config']['learning_rate']
         self.gradient_steps = cfg['config']['gradient_steps']
+        self.batch_size = cfg['config']['batch_size']
         self.optimizer = optim.Adam(self.model.parameters(), self.lr)
         self.loss_fn = nn.BCELoss()
         
@@ -74,9 +76,8 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
         return self.model(x.view(-1, self.obs_dim))
     
     def train(self, obs_batch, success_batch):
+        assert self.batch_size == len(obs_batch) == len(success_batch)
         self.model.train()
-        assert len(obs_batch) == len(success_batch)
-        obs_batch.requires_grad_ = True
         train_loss = train_accuracy = eval_loss = eval_accuracy = None
         for i in range(self.gradient_steps):
             out = self(obs_batch)
@@ -98,14 +99,6 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
             'goid_train_accuracy': train_accuracy,
             'goid_train_loss': train_loss,
         }
-        
-    def eval(self, obs_batch, success_batch):
-        self.model.eval()
-        with torch.no_grad():
-            out = self(obs_batch)
-            accuracy = torch.mean(((out >= 0.5).float() == success_batch).float())
-            loss = self.loss_fn(out, success_batch)
-        return {'goid_eval_accuracy': accuracy, 'goid_eval_loss': loss}
     
     def sample(self):
         self.model.eval()

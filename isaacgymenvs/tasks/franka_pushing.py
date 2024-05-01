@@ -30,6 +30,7 @@ import numpy as np
 import os
 import torch
 import math
+from torch.utils.data import DataLoader, TensorDataset
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
@@ -600,21 +601,22 @@ class FrankaPushing(VecTask):
     def reset_idx(self, env_ids=None):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
-        if False: #not self.test and isinstance(self.goal_sampler, GoalSampler):
+        if not self.test and isinstance(self.goal_sampler, GoalSampler):
             res_dict = self.goal_sampler.sample()
-            # self.set_state(res_dict['states'])
-            # self.update_cube_states(env_ids)
-            # if self.write_fn is not None and 'stats' in res_dict:
-            #     for k, v in res_dict['stats'].items():
-            #         self.write_fn(f'curriculum/{k}', v)
+            self.set_state(res_dict['states'])
+            self.update_cube_states(env_ids)
+            self.gym.simulate(self.sim)
+            if self.write_fn is not None and 'stats' in res_dict:
+                for k, v in res_dict['stats'].items():
+                    self.write_fn(f'curriculum/{k}', v)
         else:
             self.reset_idx_cubes_goals(env_ids)
             self.reset_idx_agent(env_ids)
         cube_zs = self._cube_states[0][:,2]
         cube_z_mean = cube_zs.mean()
         cube_z_sd = cube_zs.std()
-        print('debug cube z mean:', cube_z_mean)
-        print('debug cube z sd:', cube_z_sd)
+        # print('debug cube z mean:', cube_z_mean)
+        # print('debug cube z sd:', cube_z_sd)
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         
@@ -1020,21 +1022,30 @@ class FrankaPushing(VecTask):
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
             if isinstance(self.goal_sampler, GOIDGoalSampler) and not self.test:
-                save_dir = 'data/goid'
-                os.makedirs(save_dir, exist_ok=True)
-                obs_batch = self.experience_buffer.tensor_dict['obses'][0]
-                success_batch = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
-                # self.goid_buffer.update_data_auto('obses', self.experience_buffer.tensor_dict['obses'][0], increment=False)
-                # self.goid_buffer.update_data_auto('success', metrics[self.goal_sampler.success_metric].float(), increment=True)
                 self.goid_counter += 1
-                # obs_batch = self.goid_buffer.tensor_dict['obses']
-                # success_batch = self.goid_buffer.tensor_dict['success']
-                np.save(f'{save_dir}/obs{self.goid_counter}', obs_batch.cpu().numpy())
-                np.save(f'{save_dir}/success{self.goid_counter}', success_batch.cpu().numpy())
-                self.extras["curriculum"] = {
-                    'goid_epochs': self.goid_counter,
-                    **self.goal_sampler.train(obs_batch, success_batch)
-                }
+                obses = self.experience_buffer.tensor_dict['obses'][0]
+                successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
+                if self.goal_sampler.collect_data:
+                    save_dir = 'data/goid'
+                    os.makedirs(save_dir, exist_ok=True)
+                    np.save(f'{save_dir}/obs{self.goid_counter}', obses.cpu().numpy())
+                    np.save(f'{save_dir}/success{self.goid_counter}', successes.cpu().numpy())
+                
+                dataset = TensorDataset(obses, successes)
+                data_loader = DataLoader(dataset, batch_size=self.goal_sampler.batch_size, shuffle=True)
+                res_dict = {}
+                for obs_batch, success_batch in data_loader:
+                    obs_batch = obs_batch.to(self.ppo_device)
+                    success_batch = success_batch.to(self.ppo_device)
+                    batch_dict = self.goal_sampler.train(obs_batch, success_batch)
+                    for k, v in batch_dict.items():
+                        if k in res_dict:
+                            res_dict[k].append(v.item())
+                        else:
+                            res_dict[k] = [v.item()]
+                for k, v in res_dict.items():
+                    res_dict[k] = np.mean(v)
+                self.extras["curriculum"] = {'goid_epochs': self.goid_counter, **res_dict}
             
             self.reset_idx(env_ids)
         # debug viz
