@@ -104,3 +104,4 @@ params:
         learning_rate: 5e-4
         success_metric: success_4
         collect_data: False
+        visualize_every: None

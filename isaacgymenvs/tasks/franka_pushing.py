@@ -94,7 +94,7 @@ class FrankaPushing(VecTask):
         self.franka_dof_noise = self.cfg["env"]["frankaDofNoise"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
         self.n_cubes_train = self.cfg["env"]["nCubes"]
-        self.n_cubes_test = 6
+        self.n_cubes_test = self.cfg["env"].get("nCubesTest", 6)
         self.n_observed_cubes = self.cfg["env"].get("nObservedCubes", self.n_cubes_train)
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
@@ -533,9 +533,9 @@ class FrankaPushing(VecTask):
 
         # Refresh states
         self._update_states()
-
-    def compute_observations(self):
-        self._refresh()
+        
+    @property
+    def obs_keys(self):
         obs = ["eef_pos", "eef_quat", "goal_pos"]
         if self.observe_velocities:
             obs += ["eef_vel"]
@@ -544,11 +544,22 @@ class FrankaPushing(VecTask):
             if self.observe_velocities:
                 obs += [f"cube{j}_angvel"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
-        self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
+        return obs
 
-        maxs = {ob: torch.max(self.states[ob]).item() for ob in obs}
-
+    def compute_observations(self):        
+        self._refresh()
+        self.obs_buf = torch.cat([self.states[ob] for ob in self.obs_keys], dim=-1)
+        maxs = {ob: torch.max(self.states[ob]).item() for ob in self.obs_keys}
         return self.obs_buf
+    
+    def obs_buf_idx(self):
+        res = {}
+        idx = 0
+        for obs_key in self.obs_keys:
+            size = self.states[obs_key].shape[1]
+            res[obs_key] = (idx, idx+size)
+            idx += size
+        return res
     
     def _compute_pixel_obs_save(self):
         """Save images for debugging"""
@@ -632,7 +643,7 @@ class FrankaPushing(VecTask):
         self._reset_goal_state(env_ids=env_ids)
         self.update_cube_states(env_ids)
 
-        if isinstance(self.goal_sampler, GoalSampler):
+        if not self.test and isinstance(self.goal_sampler, GoalSampler):
             for _ in range(self.goal_sampler.requires_extra_sim):
                 self.gym.simulate(self.sim)
 
@@ -868,6 +879,12 @@ class FrankaPushing(VecTask):
         
         self.cube_masses = [None] * n_tasks
 
+    @property
+    def _feasible_goal_pos(self):
+        center = self._table_surface_pos[:2]
+        if self.mode == 'grasping':
+            raise NotImplementedError
+        return center[:, None] + np.array([-self.goal_position_noise, self.goal_position_noise, 0])
 
     def _reset_goal_state(self, env_ids):
         """
@@ -1046,6 +1063,9 @@ class FrankaPushing(VecTask):
                 for k, v in res_dict.items():
                     res_dict[k] = np.mean(v)
                 self.extras["curriculum"] = {'goid_epochs': self.goid_counter, **res_dict}
+                
+                if self.goal_sampler.visualize_every is not None and self.goid_counter % self.goal_sampler.visualize_every == 0:
+                    self.goal_sampler.viz(obses)
             
             self.reset_idx(env_ids)
         # debug viz

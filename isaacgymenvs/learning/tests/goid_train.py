@@ -37,7 +37,6 @@ def train_epochs(wandb_run, data_loader, n_epochs, cfg, device, print_every=100)
         cnt = 1
         for data, labels in data_loader:
             data, labels = data.to(device), labels.to(device)
-            breakpoint()
             batch_dict = goal_sampler.train(data, labels)
             wandb_run.log({'epoch': epoch, **batch_dict})
             if cnt % print_every == 0:

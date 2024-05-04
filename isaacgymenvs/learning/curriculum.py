@@ -2,12 +2,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import matplotlib.pyplot as plt
 from scipy.stats import entropy
 
 from isaacgymenvs.ppo.network_builder import NetworkBuilder
 
 class GoalSampler:
-    def __init__(self, env, requires_extra_sim=0):
+    def __init__(self, env, requires_extra_sim=1):
         self.env = env
         self.requires_extra_sim = requires_extra_sim
         
@@ -37,6 +38,8 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
         self.max_sample_attempts = cfg['intermediate'].get('max_sample_attempts', 10)
         self.success_metric = cfg['config']['success_metric']
         self.collect_data = cfg['config']['collect_data']
+        self.viz_every = cfg['config']['visualize_every']
+        self.viz_size = 8
         
         self.units = cfg['mlp']['units']
         self.activation = cfg['mlp']['activation']
@@ -140,6 +143,29 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
                 'goid_std': torch.std(pred)
             }
         }
+        
+    def viz(self, obses, epoch, grid_resolution=16):
+        obs = obses[np.random.randint(len(obses))]
+        obs = torch.tile(obs, (grid_resolution**2, 1))
+        idx_start, idx_end = self.env.obs_buf_idx()['goal_pos']
+        range_start, range_end = self.env._feasible_goal_pos
+        grid_x, grid_y = np.linspace(range_start, range_end, grid_resolution, endpoint=False)
+        mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
+        goal_pos = np.hstack((mesh_x[:, None], mesh_y[:, None]))
+        obs[:, idx_start : idx_end] = torch.tensor(goal_pos, device=self.device, dtype=torch.float32)
+        with torch.no_grad():
+            preds = []
+            for obs_chunk in torch.chunk(obs, np.ceil(len(obs) / self.batch_size)):
+                preds.append(self(obs_chunk))
+            preds = torch.stack(preds, dim=0).cpu().numpy()
+            preds = preds.reshape((grid_resolution, grid_resolution))
+        
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(6,6))
+        ax.imshow(preds, cmap='coolwarm')
+        plt.title(f'GOID success prediction, epoch={epoch}')
+        return {''}
+        
         
 class VDSGoalSampler(GoalSampler):
     def __init__(self, env, cfg, model_runner, algo_name):
