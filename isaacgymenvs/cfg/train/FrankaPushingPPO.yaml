@@ -84,6 +84,7 @@ params:
       n_candidates: 1
       temperature: 1
       disagreement_fn_name: std
+      visualize_every: None
     goid:
       intermediate:
         lower: 0.1

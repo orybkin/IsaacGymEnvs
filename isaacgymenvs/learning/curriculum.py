@@ -1,23 +1,30 @@
+import math
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
-from scipy.stats import entropy
 
 from isaacgymenvs.ppo.network_builder import NetworkBuilder
 
 class GoalSampler:
-    def __init__(self, env, requires_extra_sim=1):
+    def __init__(self, name, env, requires_extra_sim=1, has_viz=False):
+        self.name = name
         self.env = env
         self.requires_extra_sim = requires_extra_sim
+        self.has_viz = has_viz
         
     def sample(self):
         raise NotImplementedError
+    
+    def viz(self, obs):
+        if self.has_viz:
+            raise NotImplementedError
+
 
 class UniformGoalSampler(GoalSampler):
     def __init__(self, env):
-        super().__init__(env)
+        super().__init__('uniform', env)
         
     def sample(self):
         states, obs = self.env.sample_goals(1)
@@ -28,7 +35,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
     
     def __init__(self, env, obs_dim, cfg, device):
         nn.Module.__init__(self)
-        GoalSampler.__init__(self, env, requires_extra_sim=10)
+        GoalSampler.__init__(self, 'goid', env, requires_extra_sim=10, has_viz=True)
         
         self.obs_dim = np.prod(obs_dim)
         self.device = device
@@ -131,7 +138,6 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
             sampled_obses_cat = torch.stack(sampled_obses, dim=0)
             selected_obs = sampled_obses_cat[filled_indices, torch.arange(num_envs)]
         
-        # TODO: fix logging; currently takes stats over envs
         return {
             'states': selected_states,
             'obs': selected_obs,
@@ -144,36 +150,36 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
             }
         }
         
-    def viz(self, obses, epoch, grid_resolution=16):
-        obs = obses[np.random.randint(len(obses))]
-        obs = torch.tile(obs, (grid_resolution**2, 1))
-        idx_start, idx_end = self.env.obs_buf_idx()['goal_pos']
-        range_start, range_end = self.env._feasible_goal_pos
-        grid_x, grid_y = np.linspace(range_start, range_end, grid_resolution, endpoint=False)
-        mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
-        goal_pos = np.hstack((mesh_x[:, None], mesh_y[:, None]))
-        obs[:, idx_start : idx_end] = torch.tensor(goal_pos, device=self.device, dtype=torch.float32)
+    def viz(self, obs):
+        grid_resolution = int(np.sqrt(len(obs)))
+        assert grid_resolution ** 2 == len(obs)
+        
+        self.model.eval()
         with torch.no_grad():
             preds = []
-            for obs_chunk in torch.chunk(obs, np.ceil(len(obs) / self.batch_size)):
+            for obs_chunk in torch.chunk(obs, math.ceil(len(obs) / self.batch_size)):
                 preds.append(self(obs_chunk))
             preds = torch.stack(preds, dim=0).cpu().numpy()
             preds = preds.reshape((grid_resolution, grid_resolution))
         
         plt.clf()
         fig, ax = plt.subplots(figsize=(6,6))
-        ax.imshow(preds, cmap='coolwarm')
-        plt.title(f'GOID success prediction, epoch={epoch}')
-        return {''}
+        im = ax.imshow(
+            preds, cmap='Reds', interpolation='none', vmin=0, vmax=1, 
+            extent=[-self.env.goal_position_noise, self.env.goal_position_noise, -self.env.goal_position_noise, self.env.goal_position_noise]
+        )
+        cbar = fig.colorbar(im, ax=ax)
+        return fig
         
         
 class VDSGoalSampler(GoalSampler):
     def __init__(self, env, cfg, model_runner, algo_name):
-        super().__init__(env, requires_extra_sim=10)
+        super().__init__('vds', env, requires_extra_sim=10, has_viz=True)
         self.model_runner = model_runner
         self.algo_name = algo_name
         self.temperature = cfg.get('temperature', 1)
         self.n_candidates = cfg.get('n_candidates', 1)
+        self.viz_every = cfg.get('visualize_every', None)
         fn_name_to_fn = {
             'var': lambda vals: torch.var(vals, correction=0, dim=0),
             'std': lambda vals: torch.std(vals, correction=0, dim=0),
@@ -212,25 +218,40 @@ class VDSGoalSampler(GoalSampler):
             cand_states_k = torch.stack([cand_states[i][k] for i in range(self.n_candidates)], dim=0)  # (n_candidates, num_envs, ...)
             sampled_states[k] = cand_states_k[indices, torch.arange(num_envs), ...]
         sampled_obs = cand_obses[indices, torch.arange(num_envs), :]
-
-        # TODO: fix logging; currently takes a mean over envs
+        
         if disagreement is None:
-            d_mean = d_std = d_entropy = d_max_entropy = -1
+            d_entropy = d_max_entropy = -1
         else:
-            disagreement = np.mean(disagreement, axis=0)
-            d_mean = np.mean(disagreement)
-            d_std = np.std(disagreement)
-            d_entropy = entropy(disagreement, base=2)
-            d_max_entropy = np.log2(len(disagreement))
+            d_entropy = (-disagreement * np.log2(disagreement)).sum(axis=1).mean()
+            d_max_entropy = np.log2(self.n_candidates)
         
         return {
             'states': sampled_states,
             'obs': sampled_obs,
             'stats': {
-                'disagreement_mean': d_mean,
-                'disagreement_std': d_std,
                 'disagreement_entropy': d_entropy,
                 'disagreement_max_entropy': d_max_entropy,
             }
         }
     
+    def viz(self, obs):
+        grid_resolution = int(np.sqrt(len(obs)))
+        assert grid_resolution ** 2 == len(obs)
+        
+        with torch.no_grad():
+            if self.algo_name == 'ppo':
+                values = self.model_runner({'obs': obs})['full_values']
+                values = values.permute(1, 0)
+                disagreement = self.disagreement_fn(values).cpu().numpy()
+                disagreement = disagreement.reshape((grid_resolution, grid_resolution))
+            else:
+                raise NotImplementedError
+        
+        plt.clf()
+        fig, ax = plt.subplots(figsize=(6, 6))
+        im = ax.imshow(
+            disagreement, cmap='Reds', interpolation='none', vmin=0,
+            extent=[-self.env.goal_position_noise, self.env.goal_position_noise, -self.env.goal_position_noise, self.env.goal_position_noise]
+        )
+        cbar = fig.colorbar(im, ax=ax)
+        return fig

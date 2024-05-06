@@ -40,6 +40,7 @@ import pathlib
 from rl_games.common import env_configurations, vecenv
 import wandb
 from isaacgymenvs.ppo.algo_observer import AlgoObserver
+from matplotlib.figure import Figure
 
 from isaacgymenvs.tasks import isaacgym_task_map
 from isaacgymenvs.utils.utils import set_seed, flatten_dict
@@ -254,7 +255,10 @@ class RLGPUAlgoObserver(AlgoObserver):
                 for stat, scalar in value.items():
                     self.writer.add_scalar(f'episodic_stats{phase}/{metric}_{stat}', np.mean(scalar), frame)
             for key, value in self.curriculum.items():
-                self.writer.add_scalar(f'curriculum/{key}', np.mean(value))
+                if isinstance(value, Figure):
+                    wandb.log({f'curriculum/{key}': [wandb.Image(value)]})
+                else:
+                    self.writer.add_scalar(f'curriculum/{key}', np.mean(value))
             self.episodic_stats = dict()
 
             self.new_finished_episodes = False

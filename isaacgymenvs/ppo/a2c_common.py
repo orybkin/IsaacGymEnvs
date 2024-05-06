@@ -505,9 +505,7 @@ class A2CBase(BaseAlgorithm):
         }
         self.experience_buffer = ExperienceBuffer(self.env_info, algo_info, self.ppo_device)
         
-        if self.use_curriculum == 'goid':
-            # self.vec_env.env.goid_buffer = GoidBuffer(
-            #     self.env_info, algo_info, self.ppo_device, batch_size=self.curriculum_cfg['goid']['config']['batch_size'])
+        if self.use_curriculum in ('goid', 'vds'):
             self.vec_env.env.experience_buffer = self.experience_buffer
 
         algo_info = {

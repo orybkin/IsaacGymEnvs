@@ -37,7 +37,7 @@ from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.learning.curriculum import GoalSampler, GOIDGoalSampler
+from isaacgymenvs.learning.curriculum import GoalSampler, GOIDGoalSampler, VDSGoalSampler
 
 
 @torch.jit.script
@@ -187,7 +187,7 @@ class FrankaPushing(VecTask):
         # Refresh tensors
         self._refresh()
         
-        self.goid_counter = 0
+        self.reset_counter = 0
 
 
     def create_sim(self):
@@ -879,12 +879,15 @@ class FrankaPushing(VecTask):
         
         self.cube_masses = [None] * n_tasks
 
-    @property
-    def _feasible_goal_pos(self):
-        center = self._table_surface_pos[:2]
-        if self.mode == 'grasping':
-            raise NotImplementedError
-        return center[:, None] + np.array([-self.goal_position_noise, self.goal_position_noise, 0])
+    def _goal_grid(self, obses, grid_resolution):
+        obs = obses[np.random.randint(len(obses))]
+        obs = torch.tile(obs, (grid_resolution**2, 1))
+        idx_start, idx_end = self.obs_buf_idx()['goal_pos']
+        grid_x = grid_y = np.linspace(-self.goal_position_noise, self.goal_position_noise, grid_resolution + 1, endpoint=False)[1:]
+        mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
+        goal_pos = np.hstack((mesh_x.reshape(-1, 1), mesh_y.reshape(-1, 1)))
+        obs[:, idx_start : idx_start + 2] = torch.tensor(goal_pos, device=self.device, dtype=torch.float32)
+        return obs
 
     def _reset_goal_state(self, env_ids):
         """
@@ -1038,34 +1041,41 @@ class FrankaPushing(VecTask):
         # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
-            if isinstance(self.goal_sampler, GOIDGoalSampler) and not self.test:
-                self.goid_counter += 1
+            if isinstance(self.goal_sampler, (GOIDGoalSampler, VDSGoalSampler)) and not self.test:
                 obses = self.experience_buffer.tensor_dict['obses'][0]
-                successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
-                if self.goal_sampler.collect_data:
-                    save_dir = 'data/goid'
-                    os.makedirs(save_dir, exist_ok=True)
-                    np.save(f'{save_dir}/obs{self.goid_counter}', obses.cpu().numpy())
-                    np.save(f'{save_dir}/success{self.goid_counter}', successes.cpu().numpy())
-                
-                dataset = TensorDataset(obses, successes)
-                data_loader = DataLoader(dataset, batch_size=self.goal_sampler.batch_size, shuffle=True)
-                res_dict = {}
-                for obs_batch, success_batch in data_loader:
-                    obs_batch = obs_batch.to(self.ppo_device)
-                    success_batch = success_batch.to(self.ppo_device)
-                    batch_dict = self.goal_sampler.train(obs_batch, success_batch)
-                    for k, v in batch_dict.items():
-                        if k in res_dict:
-                            res_dict[k].append(v.item())
-                        else:
-                            res_dict[k] = [v.item()]
-                for k, v in res_dict.items():
-                    res_dict[k] = np.mean(v)
-                self.extras["curriculum"] = {'goid_epochs': self.goid_counter, **res_dict}
-                
-                if self.goal_sampler.visualize_every is not None and self.goid_counter % self.goal_sampler.visualize_every == 0:
-                    self.goal_sampler.viz(obses)
+                if isinstance(self.goal_sampler, GOIDGoalSampler):
+                    self.reset_counter += 1
+                    successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
+                    if self.goal_sampler.collect_data:
+                        save_dir = 'data/goid'
+                        os.makedirs(save_dir, exist_ok=True)
+                        np.save(f'{save_dir}/obs{self.reset_counter}', obses.cpu().numpy())
+                        np.save(f'{save_dir}/success{self.reset_counter}', successes.cpu().numpy())
+                    
+                    dataset = TensorDataset(obses, successes)
+                    data_loader = DataLoader(dataset, batch_size=self.goal_sampler.batch_size, shuffle=True)
+                    res_dict = {}
+                    for obs_batch, success_batch in data_loader:
+                        obs_batch = obs_batch.to(self.ppo_device)
+                        success_batch = success_batch.to(self.ppo_device)
+                        batch_dict = self.goal_sampler.train(obs_batch, success_batch)
+                        for k, v in batch_dict.items():
+                            if k in res_dict:
+                                res_dict[k].append(v.item())
+                            else:
+                                res_dict[k] = [v.item()]
+                    for k, v in res_dict.items():
+                        res_dict[k] = np.mean(v)
+                    self.extras["curriculum"] = {'goid_epochs': self.reset_counter, **res_dict}
+                    
+                if self.goal_sampler.has_viz and self.goal_sampler.viz_every is not None and self.reset_counter % self.goal_sampler.viz_every == 0:
+                    obs = self._goal_grid(obses, grid_resolution=16)
+                    fig = self.goal_sampler.viz(obs, self.reset_counter)
+                    update_dict = {self.goal_sampler.name + "_viz": fig}
+                    if "curriculum" in self.extras:
+                        self.extras["curriculum"].update(update_dict)
+                    else:
+                        self.extras["curriculum"] = update_dict
             
             self.reset_idx(env_ids)
         # debug viz
