@@ -105,7 +105,8 @@ class FrankaPushing(VecTask):
         assert self.mode in ['', 'easy', 'grasping']
         self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
 
-        self.target_idx = [14,15,16]
+        self.achieved_idx = [14,15,16]
+        self.desired_idx = [7,8,9]
         self.target_name = 'cube0_pos'
 
         # Create dicts to pass to reward function

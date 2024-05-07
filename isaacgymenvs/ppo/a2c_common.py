@@ -7,7 +7,7 @@ from rl_games.algos_torch.moving_mean_std import GeneralizedMovingStats
 from rl_games.algos_torch.self_play_manager import SelfPlayManager
 from rl_games.algos_torch import torch_ext
 from isaacgymenvs.ppo import schedulers
-from rl_games.common.experience import ExperienceBuffer
+from isaacgymenvs.sac.experience import ExperienceBuffer
 from rl_games.common.interval_summary_writer import IntervalSummaryWriter
 from isaacgymenvs.ppo.diagnostics import DefaultDiagnostics, PpoDiagnostics
 from isaacgymenvs.ppo import model_builder
@@ -804,7 +804,7 @@ class A2CBase(BaseAlgorithm):
             step_time += (step_time_end - step_time_start)
             # env = self.vec_env.env
             # obs = self.obs['obs']
-            # r_comp = env.compute_franka_reward({'goal_pos': obs[:, 7:10], env.target_name: obs[:, env.target_idx]})
+            # r_comp = env.compute_franka_reward({'goal_pos': obs[:, 7:10], env.target_name: obs[:, env.achieved_idx]})
             # print(f'rewards {rewards.mean().item():.3f} {r_comp.mean().item():.3f}')
 
             shaped_rewards = self.rewards_shaper(rewards)
@@ -1257,27 +1257,35 @@ class ContinuousA2CBase(A2CBase):
         obs = relabeled_buffer.tensor_dict['obses']
         # compute episode idx
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
-        goal = torch.gather(obs[:, :, env.target_idx], 0, idx)
+        desired = torch.gather(obs[:, :, env.achieved_idx], 0, idx)
+
+        # i = 0; desired[i,0,0] == obs[:, :, env.achieved_idx][idx[i,0,0],0,0]
+        # for i in range(1024): print(desired[i,0,0] == obs[:, :, env.achieved_idx][idx[i,0,0],0,0])
+        # import matplotlib.pyplot as plt
+        # plt.plot(desired[:320,0,0].cpu().numpy())
+        # plt.plot(obs[:320, 0, env.achieved_idx[0]].cpu().numpy())
+        # plt.savefig('test_trajs.png')
+
         # goal = goal.flip(1)
-        relabeled_buffer.tensor_dict['obses'][:, :, 7:10] = goal
-        target_pos = relabeled_buffer.tensor_dict['obses'][..., env.target_idx]
+        relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = desired
+        achieved = obs[..., env.achieved_idx]
 
         # Rewards should be shifted by one
         last_obs = dict(obs=self.obs['obs'].clone())
-        last_obs['obs'][:, 7:10] = relabeled_buffer.tensor_dict['obses'][-1, :, 7:10]
-        goal = torch.cat([goal[1:], last_obs['obs'][None, :, 7:10]], 0)
-        target_pos = torch.cat([target_pos[1:], last_obs['obs'][None, :, env.target_idx]], 0)
+        last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
+        desired = torch.cat([desired[1:], last_obs['obs'][None, :, env.desired_idx]], 0)
+        achieved = torch.cat([achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
 
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         res_dict = self.run_model_in_slices(obs, relabeled_buffer.tensor_dict['actions'], relabeled_buffer.tensor_dict.keys())
         relabeled_buffer.tensor_dict.update(res_dict)
 
         # Rewards
-        rewards = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
+        rewards = env.compute_franka_reward({'goal_pos': desired, env.target_name: achieved})[:, :, None]
 
         # Original rewards (no relabeling). This should work when the relabeling is commented out
         # goal = torch.cat([relabeled_buffer.tensor_dict['obses'][1:, :, 7:10], last_obs['obs'][:, 7:10][None]], 0)
-        # target_pos = torch.cat([relabeled_buffer.tensor_dict['obses'][1:, :, env.target_idx], last_obs['obs'][:, env.target_idx][None]], 0)
+        # target_pos = torch.cat([relabeled_buffer.tensor_dict['obses'][1:, :, env.achieved_idx], last_obs['obs'][:, env.achieved_idx][None]], 0)
         # rewards = env.compute_franka_reward({'goal_pos': goal, env.target_name: target_pos})[:, :, None]
         # (rewards != buffer.tensor_dict['rewards'][:,:,0]).sum()
 
@@ -1290,9 +1298,9 @@ class ContinuousA2CBase(A2CBase):
         # plt.figure(figsize=(10, 10)) 
         # for i in range(16):
         #     plt.subplot(4, 4, i+1)
-        #     plt.plot(relabeled_buffer.tensor_dict['obses'][:, i, 14].cpu(), relabeled_buffer.tensor_dict['obses'][:, i, 15].cpu(), c='b')
-        #     plt.scatter(relabeled_buffer.tensor_dict['obses'][:, i, 7].cpu(), relabeled_buffer.tensor_dict['obses'][:, i, 8].cpu(), c='r')
-        #     plt.scatter(buffer.tensor_dict['obses'][:, i, 7].cpu(), buffer.tensor_dict['obses'][:, i, 8].cpu(), c='g')
+        #     plt.plot(relabeled_buffer.tensor_dict['obses'][:, i, env.achieved_idx[0]].cpu(), relabeled_buffer.tensor_dict['obses'][:, i, env.achieved_idx[1]].cpu(), c='b')
+        #     plt.scatter(relabeled_buffer.tensor_dict['obses'][:, i, env.desired_idx[0]].cpu(), relabeled_buffer.tensor_dict['obses'][:, i, env.desired_idx[1]].cpu(), c='r')
+        #     plt.scatter(buffer.tensor_dict['obses'][:, i, env.desired_idx[0]].cpu(), buffer.tensor_dict['obses'][:, i, env.desired_idx[1]].cpu(), c='g')
         #     plt.xlim(-0.15, 0.15)
         #     plt.ylim(-0.15, 0.15)
         #     plt.savefig('test_trajs.png')
@@ -1345,7 +1353,7 @@ class ContinuousA2CBase(A2CBase):
         ep_len = env.max_episode_length
         idx = idx * ep_len + first_idx[None, :]
         idx = torch.minimum(idx, (dones.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
-        idx = idx.repeat(1, 1, len(env.target_idx))
+        idx = idx.repeat(1, 1, len(env.achieved_idx))
         return idx
 
     def train_epoch(self):
@@ -1463,7 +1471,8 @@ class ContinuousA2CBase(A2CBase):
                     self.diagnostics.add(f'diagnostics/rms_advantage_var{identifier}', self.advantage_mean_std.moving_var)
                 else:
                     # if update_mov_avg:
-                    self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
+                    if identifier == '':
+                        self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
                     self.diagnostics.add(f'diagnostics/advantage_mean{identifier}', advantages.mean())
                     self.diagnostics.add(f'diagnostics/advantage_std{identifier}', advantages.std())
                     advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)

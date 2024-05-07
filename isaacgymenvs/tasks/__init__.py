@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from .mujoco import Mujoco
+from .mujoco_goal import MujocoGoal
 from .ant import Ant
 from .anymal import Anymal
 from .anymal_terrain import AnymalTerrain
@@ -49,6 +50,7 @@ from .trifinger import Trifinger
 # Mappings from strings to environments
 isaacgym_task_map = {
     "Mujoco": Mujoco,
+    "MujocoGoal": MujocoGoal,
     "AllegroHand": AllegroHand,
     "Ant": Ant,
     "Anymal": Anymal,

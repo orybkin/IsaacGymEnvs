@@ -1,0 +1,35 @@
+# used to create the object
+name: MujocoGoal
+
+physics_engine: ${..physics_engine}
+task_name: FetchReach-v2
+
+# if given, will override the device setting in gym. 
+env:
+  numEnvs: ${resolve_default:32,${...num_envs}}
+  envSpacing: 1.5
+  episodeLength: 256
+  enableDebugVis: False
+
+  clipObservations: 5.0
+  clipActions: 1.0
+
+  aggregateMode: 3
+
+  actionScale: 1.0
+  renderEveryEpisodes: 1000
+
+  controlType: osc  # options are {joint_tor, osc}
+
+  asset:
+    assetRoot: "../../assets"
+    assetFileNameFranka: "urdf/franka_description/robots/franka_panda_gripper.urdf"
+
+  # set to True if you use camera sensors in the environment
+  enableCameraSensors: True
+
+  sim:
+    use_gpu_pipeline: False
+
+task:
+  randomize: False

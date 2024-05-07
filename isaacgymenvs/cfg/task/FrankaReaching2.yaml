@@ -26,12 +26,19 @@ env:
 
   actionScale: 0.5
 
+  mode: ''
+  distanceFromBlock: 0.0
   nCubes: 1
   startPositionNoise: 0.12
+  friction: 0.5
+
+  rigidCubes: False
+  testTask: -1
 
   renderEveryEpisodes: 1000
 
   controlType: osc  # options are {joint_tor, osc}
+  observeVelocities: False
 
   asset:
     assetRoot: "../../assets"
