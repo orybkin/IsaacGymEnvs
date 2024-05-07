@@ -552,6 +552,7 @@ class FrankaPushing(VecTask):
         maxs = {ob: torch.max(self.states[ob]).item() for ob in self.obs_keys}
         return self.obs_buf
     
+    @property
     def obs_buf_idx(self):
         res = {}
         idx = 0
@@ -882,7 +883,7 @@ class FrankaPushing(VecTask):
     def _goal_grid(self, obses, grid_resolution):
         obs = obses[np.random.randint(len(obses))]
         obs = torch.tile(obs, (grid_resolution**2, 1))
-        idx_start, idx_end = self.obs_buf_idx()['goal_pos']
+        idx_start, idx_end = self.obs_buf_idx['goal_pos']
         grid_x = grid_y = np.linspace(-self.goal_position_noise, self.goal_position_noise, grid_resolution + 1, endpoint=False)[1:]
         mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
         goal_pos = np.hstack((mesh_x.reshape(-1, 1), mesh_y.reshape(-1, 1)))
@@ -1043,6 +1044,7 @@ class FrankaPushing(VecTask):
         if len(env_ids) > 0:
             if isinstance(self.goal_sampler, (GOIDGoalSampler, VDSGoalSampler)) and not self.test:
                 obses = self.experience_buffer.tensor_dict['obses'][0]
+                breakpoint()
                 if isinstance(self.goal_sampler, GOIDGoalSampler):
                     self.reset_counter += 1
                     successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
@@ -1070,7 +1072,7 @@ class FrankaPushing(VecTask):
                     
                 if self.goal_sampler.has_viz and self.goal_sampler.viz_every is not None and self.reset_counter % self.goal_sampler.viz_every == 0:
                     obs = self._goal_grid(obses, grid_resolution=16)
-                    fig = self.goal_sampler.viz(obs, self.reset_counter)
+                    fig = self.goal_sampler.viz(obs)
                     update_dict = {self.goal_sampler.name + "_viz": fig}
                     if "curriculum" in self.extras:
                         self.extras["curriculum"].update(update_dict)
