@@ -72,3 +72,34 @@ params:
     clip_value: True
     seq_len: 4
     bounds_loss_coef: 0.0001
+    critic_ensemble_mode: min
+    critic_loss_mode: mean
+
+  curriculum:
+    enable: False
+    vds:
+      n_candidates: 1
+      temperature: 1
+      disagreement_fn_name: std
+      visualize_every: None
+    goid:
+      intermediate:
+        lower: 0.1
+        upper: 0.9
+        max_sample_attempts: 10
+      mlp:
+        units: [256, 128, 64]
+        activation: elu
+        d2rl: False
+
+        initializer:
+          name: default
+        regularizer:
+          name: None
+      config:
+        batch_size: 256
+        gradient_steps: 10
+        learning_rate: 5e-4
+        success_metric: success_4
+        collect_data: False
+        visualize_every: None

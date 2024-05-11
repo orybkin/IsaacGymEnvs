@@ -11,6 +11,7 @@ from rl_games.common.experience import ExperienceBuffer
 from rl_games.common.interval_summary_writer import IntervalSummaryWriter
 from isaacgymenvs.ppo.diagnostics import DefaultDiagnostics, PpoDiagnostics
 from isaacgymenvs.ppo import model_builder
+from isaacgymenvs.learning.curriculum import UniformGoalSampler, MultipleGoalSampler, GOIDGoalSampler, VDSGoalSampler
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from utils.rlgames_utils import Every
 import numpy as np
@@ -251,6 +252,20 @@ class A2CBase(BaseAlgorithm):
                 self.obs_shape[k] = v.shape
         else:
             self.obs_shape = self.observation_space.shape
+ 
+        self.curriculum_cfg = params['curriculum']
+        self.use_curriculum = self.curriculum_cfg.get('enable', False)
+        if self.use_curriculum == 'vds':
+            self.vec_env.env.goal_sampler = VDSGoalSampler(
+                self.vec_env.env, self.curriculum_cfg['vds'], self.run_model, self.algo_name)
+        elif self.use_curriculum == 'goid':
+            self.vec_env.env.goal_sampler = GOIDGoalSampler(self.vec_env.env, self.obs_shape, self.curriculum_cfg['goid'], self.device).to(self.device)
+        elif self.use_curriculum == 'uniform':
+            self.vec_env.env.goal_sampler = UniformGoalSampler(self.vec_env.env)
+        elif self.use_curriculum == 'multiple':
+            self.vec_env.env.goal_sampler = MultipleGoalSampler(self.vec_env.env)
+        elif self.use_curriculum:
+            raise ValueError
  
         self.critic_coef = config['critic_coef']
         self.grad_norm = config['grad_norm']

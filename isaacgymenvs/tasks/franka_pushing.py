@@ -30,12 +30,14 @@ import numpy as np
 import os
 import torch
 import math
+from copy import deepcopy
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
+from isaacgymenvs.learning.curriculum import GoalSampler
 
 
 @torch.jit.script
@@ -92,7 +94,7 @@ class FrankaPushing(VecTask):
         self.franka_dof_noise = self.cfg["env"]["frankaDofNoise"]
         self.aggregate_mode = self.cfg["env"]["aggregateMode"]
         self.n_cubes_train = self.cfg["env"]["nCubes"]
-        self.n_cubes_test = 6
+        self.n_cubes_test = self.cfg["env"].get("nCubesTest", 6)
         self.n_observed_cubes = self.cfg["env"].get("nObservedCubes", self.n_cubes_train)
         self.dist_reward_scale = self.cfg["env"]["distRewardScale"]
         self.dist_reward_dropoff  = self.cfg["env"]["distRewardDropoff"]
@@ -176,6 +178,8 @@ class FrankaPushing(VecTask):
         # Set control limits
         self.cmd_limit = to_torch([0.1, 0.1, 0.1, 0.5, 0.5, 0.5], device=self.device).unsqueeze(0) if \
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
+
+        self.goal_sampler = None     # filled in later
 
         # Reset all environments
         self.reset_idx()
@@ -593,16 +597,61 @@ class FrankaPushing(VecTask):
         return self.obs_dict
     
     def reset_idx(self, env_ids=None):
+        if not self.test and isinstance(self.goal_sampler, GoalSampler):
+            res_dict = self.goal_sampler.sample()
+            for j in range(self.n_cubes_test):
+                self._cube_states[j][env_ids, :3] = res_dict['states'][f'cube{j}_pos'][env_ids]
+                self._cube_states[j][env_ids, 3:7] = res_dict['states'][f'cube{j}_quat'][env_ids]
+                self._cube_states[j][env_ids, 7:10] = res_dict['states'][f'cube{j}_vel'][env_ids]
+            self._update_cube_states(env_ids)
+            
+            # print("\nhere1")
+            # print(self._root_state[:, 8, :3])
+            # print(self.states['cube0_pos'])
+            # print(self._cube_states[0][:, :3])
+            # print("\nhere2")
+            # print(self._root_state[:, 8, :3])
+            # print(self.states['cube0_pos'])
+            # print(self._cube_states[0][:, :3])
+            
+            # print("\nhere3")
+            # print(self._root_state[:, 8, :3])
+            # print(self.states['cube0_pos'])
+            # print(self._cube_states[0][:, :3])
+            # breakpoint()
+            # self.gym.simulate(self.sim)
+        else:
+            self.reset_idx_cubes_goals(env_ids)
+        self.reset_idx_agent(env_ids)
+        
+        self.progress_buf[env_ids] = 0
+        self.reset_buf[env_ids] = 0
+
+    def reset_idx_cubes_goals(self, env_ids=None):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
-        env_ids_int32 = env_ids.to(dtype=torch.int32)
 
         for j in range(self.n_cubes_test):
             self._reset_init_cube_state(cube=j, env_ids=env_ids, check_valid=j>0)
             # Write these new init states to the sim states
             self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
         self._reset_goal_state(env_ids=env_ids)
+        self._update_cube_states(env_ids)
+        
+    def _update_cube_states(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        
+        # Update cube states
+        multi_env_ids_cubes_int32 = self._global_indices[env_ids, -(1 + self.n_cubes_test):].flatten()
+        self.gym.set_actor_root_state_tensor_indexed(
+            self.sim, gymtorch.unwrap_tensor(self._root_state),
+            gymtorch.unwrap_tensor(multi_env_ids_cubes_int32), len(multi_env_ids_cubes_int32))
 
+    def reset_idx_agent(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        
         # Reset agent
         reset_noise = torch.rand((len(env_ids), 9), device=self.device)
         pos = tensor_clamp(
@@ -646,14 +695,14 @@ class FrankaPushing(VecTask):
                                               gymtorch.unwrap_tensor(multi_env_ids_int32),
                                               len(multi_env_ids_int32))
 
-        # Update cube states
-        multi_env_ids_cubes_int32 = self._global_indices[env_ids, -(1 + self.n_cubes_test):].flatten()
-        self.gym.set_actor_root_state_tensor_indexed(
-            self.sim, gymtorch.unwrap_tensor(self._root_state),
-            gymtorch.unwrap_tensor(multi_env_ids_cubes_int32), len(multi_env_ids_cubes_int32))
-
-        self.progress_buf[env_ids] = 0
-        self.reset_buf[env_ids] = 0
+    def sample_goals(self, n_candidates):
+        """Samples n_candidates goals via reset"""
+        states, obses = [], []
+        for _ in range(n_candidates):
+            self.reset_idx_cubes_goals()
+            obses.append(self.compute_observations())
+            states.append(deepcopy(self.states))
+        return states, obses
 
     def freeze_cubes(self):
         # TODO this doesn't work with self.test_task
