@@ -16,7 +16,7 @@ from collections import namedtuple
 import argparse
 from datetime import datetime
 
-from isaacgymenvs.awr.awr_original import RAWR
+from awr.awr_original import RAWR
 # import rlbase # get the debugger
 
 parser = argparse.ArgumentParser(description='Process some integers.')
