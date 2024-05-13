@@ -38,7 +38,10 @@ def make(
             cfg_dict['env']['numEnvs'] = num_envs
     # reuse existing config
     else:
-        cfg_dict = omegaconf_to_dict(cfg.task)
+        if type(cfg) == dict:
+            cfg_dict = cfg
+        else:
+            cfg_dict = omegaconf_to_dict(cfg.task)
 
     create_rlgpu_env = get_rlgames_env_creator(
         seed=seed,
