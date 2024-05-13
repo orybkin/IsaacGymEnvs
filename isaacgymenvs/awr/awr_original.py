@@ -10,9 +10,9 @@ from torch.nn import functional as F
 import time
 from collections import defaultdict
 
-from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.buffers import DictRolloutBuffer, RolloutBuffer, BaseBuffer
-from stable_baselines3.common.policies import ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy, MultiInputActorCriticPolicy
+from isaacgymenvs.awr.base_class import BaseAlgorithm
+from isaacgymenvs.awr.buffers import DictRolloutBuffer, RolloutBuffer, BaseBuffer
+from isaacgymenvs.awr.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.common.utils import explained_variance, get_schedule_fn, obs_as_tensor, safe_mean
@@ -65,12 +65,6 @@ class MixedBuffer(BaseBuffer):
     
 class RAWR(BaseAlgorithm):
 
-    policy_aliases: ClassVar[Dict[str, Type[BasePolicy]]] = {
-        "MlpPolicy": ActorCriticPolicy,
-        "CnnPolicy": ActorCriticCnnPolicy,
-        "MultiInputPolicy": MultiInputActorCriticPolicy,
-    }
-
     def __init__(
         self,
         policy: Union[str, Type[ActorCriticPolicy]],
@@ -114,6 +108,7 @@ class RAWR(BaseAlgorithm):
                 spaces.MultiDiscrete,
                 spaces.MultiBinary,
             ),
+            **kwargs,
         )
 
         self.n_steps = n_steps
@@ -151,9 +146,7 @@ class RAWR(BaseAlgorithm):
             gae_lambda=self.gae_lambda,
             n_envs=self.n_envs,
         )
-        self.policy = self.policy_class(  # type: ignore[assignment]
-            self.observation_space, self.action_space, self.lr_schedule, **self.policy_kwargs
-        )
+        self.policy = ActorCriticPolicy(self.observation_space, self.action_space, self.lr_schedule, **self.policy_kwargs)
         self.policy = self.policy.to(self.device)
 
     def collect_rollouts(self, env: VecEnv, callback, rollout_buffer: RolloutBuffer, n_rollout_steps: int):
