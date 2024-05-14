@@ -266,6 +266,7 @@ class AWRAgent():
 
         # Rewards
         rewards = env.compute_franka_reward({'goal_pos': desired, env.target_name: achieved})[:, :, None]
+        rewards = rewards.to(self.device)
 
         # TODO there is something funny about this - why the multiply by gamma?
         if self.config['value_bootstrap']:
