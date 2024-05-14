@@ -50,6 +50,7 @@ sys.excepthook = debughook
 
 FLAGS = flags.FLAGS
 agent_config = ml_collections.ConfigDict({
+    'experiment': '',
     'num_envs': 32,
     'clip_observations': 5.0,
     'clip_actions': 1,
@@ -730,8 +731,10 @@ def main(_):
     })
     vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
 
-    time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f")
-    run_name = f"{time_str}_{FLAGS.agent['gym_env']}"
+    # TODO: add isaacgymenvs support
+    # TODO add experiment name
+    time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f") # TODO: this doesn't work with multiple seeds
+    run_name = f"{time_str}_{FLAGS.agent['experiment']}"
     FLAGS.agent['run_name'] = run_name
 
     wandb.init(

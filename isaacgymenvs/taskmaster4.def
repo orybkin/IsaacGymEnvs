@@ -34,6 +34,9 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
     export NVIDIA_DRIVER_CAPABILITIES=all
 
     apt install -y wget parallel vim git
+    # Other dependencies
+    apt-get install libglib2.0-0 -y
+
     # Install conda
     # wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
     # bash Miniconda3-latest-Linux-x86_64.sh -b -p /home/miniconda3
