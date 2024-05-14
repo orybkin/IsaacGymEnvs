@@ -703,6 +703,7 @@ def main(_):
 
     time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f") # TODO: this doesn't work with multiple seeds
     run_name = f"{time_str}_{FLAGS.agent['experiment']}"
+    FLAGS.agent['run_name'] = run_name
 
     wandb.init(
         project='taskmaster',
@@ -711,6 +712,7 @@ def main(_):
         sync_tensorboard=True,
         id=run_name,
         name=run_name,
+        config={'agent': dict(FLAGS.agent), 'env': dict(FLAGS.env), 'experiment': FLAGS.agent['experiment']},
     )
 
     agent = AWRAgent(FLAGS.agent, RLGPUAlgoObserver(run_name))
