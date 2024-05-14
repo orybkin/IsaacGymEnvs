@@ -73,6 +73,3 @@ ig_push_config = ml_collections.ConfigDict({
         "randomize": False
     }
 })
-
-# config_flags.DEFINE_config_dict('env', fetch_push_config, lock_config=False)
-config_flags.DEFINE_config_dict('env', ig_push_config, lock_config=False)

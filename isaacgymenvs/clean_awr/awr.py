@@ -719,4 +719,12 @@ def main(_):
 if __name__ == '__main__':
     from isaacgymenvs.clean_awr import agent_config
     from isaacgymenvs.clean_awr import env_config
+
+    config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
+    config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
+
+    # config_flags.DEFINE_config_dict('agent', agent_config.ig_push_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('env', env_config.ig_push_config, lock_config=False)
+
+
     app.run(main)

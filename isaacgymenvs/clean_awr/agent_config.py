@@ -66,6 +66,3 @@ ig_push_config = ml_collections.ConfigDict({
     'truncate_grads': 0,
     'grad_norm': 5,
 })
-
-# config_flags.DEFINE_config_dict('agent', fetch_push_config, lock_config=False)
-config_flags.DEFINE_config_dict('agent', ig_push_config, lock_config=False)
