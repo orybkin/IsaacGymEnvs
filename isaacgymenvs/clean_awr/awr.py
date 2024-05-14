@@ -43,46 +43,7 @@ def debughook(etype, value, tb):
 sys.excepthook = debughook
 
 
-
-# =======================
-# Config.
-# =======================
-
 FLAGS = flags.FLAGS
-agent_config = ml_collections.ConfigDict({
-    'experiment': '',
-    'num_envs': 32,
-    'clip_observations': 5.0,
-    'clip_actions': 1,
-    'hidden_dims': (256, 128, 64),
-    'temperature': 0.2, # 0 for behavior cloning.
-    'horizon_length': 8192,
-    'num_minibatches': 32,
-    'mini_epochs': 5,
-    'gamma': 0.95,
-    'tau': 0.95,
-    'lr': 0.0005,
-    'entropy_coef': 0.05,
-    'normalize_value': 1,
-    'normalize_input': 1,
-    'normalize_advantage': 1,
-    'value_bootstrap': 1,
-    'joint_value_norm': 1,
-    'relabel': 1,
-    'gym_env': 'FetchPush-v2',
-    'isaacgym_task': 'MujocoGoal',
-    'device': 'cuda:0',
-    'graphics_device_id': 0,
-    'test_every_episodes': 10,
-    'max_epochs': 50000,
-    'e_clip': 0.2,
-    'clip_value': 1,
-    'critic_coef': 4,
-    'bounds_loss_coef': 0.0001,
-    'truncate_grads': 0,
-    'grad_norm': 5,
-})
-config_flags.DEFINE_config_dict('agent', agent_config, lock_config=False)
 
 # =======================
 # Training Code.
@@ -152,6 +113,7 @@ class AWRAgent():
         self.writer = SummaryWriter(self.summaries_dir)
         self.algo_observer = algo_observer
         self.algo_observer.before_init('run', config, self.config['run_name'])
+        self.algo_observer.after_init(self)
 
         # Initialize model.
         self.model = AWRNetwork(
@@ -251,7 +213,6 @@ class AWRAgent():
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
         desired = torch.gather(obs[:, :, env.achieved_idx], 0, idx)
 
-        # goal = goal.flip(1)
         relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = desired
         achieved = obs[..., env.achieved_idx]
 
@@ -288,27 +249,31 @@ class AWRAgent():
 
         return relabeled_buffer, relabeled_batch
 
+    def cast(self, x):
+        if isinstance(x, torch.Tensor): return x
+        return torch.from_numpy(x).to(self.device)
 
     def cast_obs(self, obs):
+        if isinstance(obs, torch.Tensor): return obs
         return torch.FloatTensor(obs).to(self.device)
 
     def obs_to_tensors(self, obs):
         return {'obs' : self.cast_obs(obs)}
 
     def env_step(self, actions):
-
         if self.config['clip_actions']:
             actions = torch.clamp(actions, -1.0, 1.0)
             actions = rescale_actions(self.actions_low, self.actions_high, actions)
-        actions = actions.cpu().numpy()
+        # actions = actions.cpu().numpy()
 
         obs, rewards, terminated, truncated, infos = self.vec_env.step(actions)
+        if isinstance(obs, dict): obs = obs['obs']
         dones = terminated + truncated
-        rewards = np.expand_dims(rewards, axis=1)
-        return self.obs_to_tensors(obs), torch.from_numpy(rewards).to(self.device).float(), torch.from_numpy(dones).to(self.device), infos
+        return self.obs_to_tensors(obs), self.cast(rewards[:, None]).float(), self.cast(dones), infos
 
     def env_reset(self):
         obs = self.vec_env.reset()
+        if isinstance(obs, dict): obs = obs['obs']
         obs = self.obs_to_tensors(obs)
         return obs
 
@@ -670,16 +635,10 @@ class AWRAgent():
 
                 for i in range(1):
                     rewards_name = 'rewards' if i == 0 else 'rewards{0}'.format(i)
-                    self.writer.add_scalar(rewards_name + '/step'.format(i), mean_rewards[i], frame)
-                    self.writer.add_scalar(rewards_name + '/iter'.format(i), mean_rewards[i], epoch_num)
-                    self.writer.add_scalar(rewards_name + '/time'.format(i), mean_rewards[i], total_time)
-                    self.writer.add_scalar('shaped_' + rewards_name + '/step'.format(i), mean_shaped_rewards[i], frame)
-                    self.writer.add_scalar('shaped_' + rewards_name + '/iter'.format(i), mean_shaped_rewards[i], epoch_num)
-                    self.writer.add_scalar('shaped_' + rewards_name + '/time'.format(i), mean_shaped_rewards[i], total_time)
+                    self.writer.add_scalar(rewards_name.format(i), mean_rewards[i], frame)
+                    self.writer.add_scalar('shaped_' + rewards_name.format(i), mean_shaped_rewards[i], frame)
 
-                self.writer.add_scalar('episode_lengths/step', mean_lengths, frame)
-                self.writer.add_scalar('episode_lengths/iter', mean_lengths, epoch_num)
-                self.writer.add_scalar('episode_lengths/time', mean_lengths, total_time)
+                self.writer.add_scalar('episode_lengths', mean_lengths, frame)
             update_time = 0
             
             # ===============================
@@ -694,25 +653,17 @@ class AWRAgent():
                 print("Done Testing.")
 
 
-
 # =======================
 # Run Script.
 # =======================
 def main(_):
     FLAGS.agent['num_actors'] = FLAGS.agent['num_envs']
-
-    env_cfg = {
-        'task_name': FLAGS.agent['gym_env'],
-        'name': FLAGS.agent['isaacgym_task'],
-        'env': {
-            'numEnvs': FLAGS.agent['num_envs'],
-        }
-    }
+    FLAGS.env['env']['numEnvs'] = FLAGS.agent['num_envs']
 
     def create_isaacgym_env(**kwargs):
         envs = isaacgymenvs.make(
             6080, # seed 
-            FLAGS.agent['gym_env'], 
+            FLAGS.env['name'], 
             FLAGS.agent['num_envs'], 
             FLAGS.agent['device'],
             FLAGS.agent['device'],
@@ -721,7 +672,7 @@ def main(_):
             False, # multi_gpu
             False, # capture_video
             True, # force_render
-            env_cfg,
+            FLAGS.env,
             **kwargs,
         )
         return envs
@@ -731,8 +682,6 @@ def main(_):
     })
     vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
 
-    # TODO: add isaacgymenvs support
-    # TODO add experiment name
     time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f") # TODO: this doesn't work with multiple seeds
     run_name = f"{time_str}_{FLAGS.agent['experiment']}"
     FLAGS.agent['run_name'] = run_name
@@ -750,4 +699,6 @@ def main(_):
     agent.train()
 
 if __name__ == '__main__':
+    from isaacgymenvs.clean_awr import agent_config
+    from isaacgymenvs.clean_awr import env_config
     app.run(main)
