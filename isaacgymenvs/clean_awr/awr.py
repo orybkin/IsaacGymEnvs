@@ -65,6 +65,7 @@ agent_config = ml_collections.ConfigDict({
     'normalize_value': 1,
     'normalize_input': 1,
     'normalize_advantage': 1,
+    'normalize_advantage_joint': 0,
     'value_bootstrap': 1,
     'joint_value_norm': 1,
     'relabel': 1,
@@ -76,10 +77,11 @@ agent_config = ml_collections.ConfigDict({
     'max_epochs': 50000,
     'e_clip': 0.2,
     'clip_value': 1,
-    'critic_coef': 4,
+    'critic_coef': 4.0,
     'bounds_loss_coef': 0.0001,
     'truncate_grads': 0,
     'grad_norm': 5,
+    'wandb_name': 'default'
 })
 config_flags.DEFINE_config_dict('agent', agent_config, lock_config=False)
 
@@ -428,7 +430,7 @@ class AWRAgent():
         return losses_dict, kl_dist, self.config['lr'], lr_mul, mu.detach(), sigma.detach()
 
     # Normalize advantages, returns, etc.
-    def prepare_dataset(self, batch_dict, dataset, update_mov_avg=True, identifier=''):
+    def prepare_dataset(self, batch_dict, dataset, update_mov_avg=True, fixed_advantage_normalizer=None, identifier=''):
         returns = batch_dict['returns']
         values = batch_dict['values']
         advantages = returns - values
@@ -450,7 +452,11 @@ class AWRAgent():
                 self.advantage_mean_std = dict(mean=advantages.mean(), std=advantages.std())
             self.diagnostics.add(f'diagnostics/advantage_mean{identifier}', advantages.mean())
             self.diagnostics.add(f'diagnostics/advantage_std{identifier}', advantages.std())
-            advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
+
+            if fixed_advantage_normalizer is not None:
+                advantages = (advantages - fixed_advantage_normalizer[0]) / (fixed_advantage_normalizer[1] + 1e-8)
+            else:
+                advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
         
             if self.config['normalize_value']:
                 self.diagnostics.add(f'diagnostics/rms_value_mean{identifier}', self.value_mean_std.running_mean)
@@ -597,12 +603,27 @@ class AWRAgent():
                 relabeled_buffer, relabeled_batch = self.relabel_batch(self.experience_buffer)
             self.set_train()
             self.curr_frames = batch_dict.pop('played_frames')
-            self.prepare_dataset(batch_dict, self.dataset)
+
+            if self.config['relabel'] and self.config['normalize_advantage_joint']:
+                returns = batch_dict['returns']
+                values = batch_dict['values']
+                advantages = returns - values
+                returns_relabel = relabeled_batch['returns']
+                values_relabel = relabeled_batch['values']
+                advantages_relabel = returns_relabel - values_relabel
+                advantages = torch.cat([advantages, advantages_relabel], 0)
+                advantages_mean = advantages.mean()
+                advantages_std = advantages.std()
+                fixed_advantage_normalizer = (advantages_mean, advantages_std)
+            else:
+                fixed_advantage_normalizer = None
+
+            self.prepare_dataset(batch_dict, self.dataset, fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='')
 
             kl_dataset = self.dataset
             if self.config['relabel']:
                 self.set_eval()
-                self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=self.config['joint_value_norm'], identifier='_relabeled')
+                self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=self.config['joint_value_norm'], fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='_relabeled', )
                 kl_dataset = self.relabeled_dataset
                 self.set_train()
             relabeled_minibatch = None
@@ -731,7 +752,7 @@ def main(_):
     vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
 
     time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f")
-    run_name = f"{time_str}_{FLAGS.agent['gym_env']}"
+    run_name = f"{time_str}_{FLAGS.agent['gym_env']}_{FLAGS.agent['wandb_name']}"
     FLAGS.agent['run_name'] = run_name
 
     wandb.init(

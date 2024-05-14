@@ -83,6 +83,8 @@ class AWRNetwork(nn.Module):
         mu = self.mu(a_out)
         logstd = mu*0 + self.sigma
 
+        logstd = torch.tanh(logstd) # Clip to (-1, 1)
+
         sigma = torch.exp(logstd)
         distr = torch.distributions.Normal(mu, sigma, validate_args=False)
         if is_train:
