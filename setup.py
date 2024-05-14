@@ -23,7 +23,9 @@ INSTALL_REQUIRES = [
     "rl-games>=1.6.0",
     "pyvirtualdisplay",
     "moviepy",
-    # "stable_baselines==1.0.0",
+    "stable_baselines==2.0.0",
+    "gymnasium_robotics[mujoco]",
+    "ml_collections",
     # "gymnasium==3.3.0",
     ]
 
