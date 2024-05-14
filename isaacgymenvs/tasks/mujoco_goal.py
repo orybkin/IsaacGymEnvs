@@ -72,12 +72,13 @@ class MujocoGoal:
 
     def step(self, actions):
         self.curr_step += 1
-        obs, r, truncated, info = self.env.step(actions)
+        obs, r, truncated, info = self.env.step(actions.cpu().numpy())
         terminated = np.zeros_like(truncated)
         truncated = np.ones_like(truncated) * (self.curr_step % self.max_episode_length == 0)
         # if truncated.all() or terminated.all():
         #     self.reset()
-        return self.cat(obs), r, np.array(terminated), np.array(truncated), {}
+        success = [i['is_success'] for i in info]
+        return self.cat(obs), r, np.array(terminated), np.array(truncated), {'episodic': {'success': torch.Tensor(success)}}
     
     def compute_franka_reward(self, d):
         rewards = torch.Tensor(self.env.env_method("compute_reward", d['goal_pos'].cpu(), d['achieved_goal'].cpu(), {}, indices=[0]))[0].cuda()
