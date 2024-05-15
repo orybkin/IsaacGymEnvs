@@ -497,6 +497,8 @@ class AWRAgent():
         while True:
             self.epoch_num += 1
             epoch_num = self.epoch_num
+            if self.epoch_num > self.config['max_epochs']:
+                break
 
 
 
@@ -681,7 +683,7 @@ def main(_):
 
     def create_isaacgym_env(**kwargs):
         envs = isaacgymenvs.make(
-            6080, # seed 
+            FLAGS.agent['seed'], # seed 
             FLAGS.env['name'], 
             FLAGS.agent['num_envs'], 
             FLAGS.agent['device'],
@@ -704,14 +706,15 @@ def main(_):
     time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f") # TODO: this doesn't work with multiple seeds
     run_name = f"{time_str}_{FLAGS.agent['experiment']}"
     FLAGS.agent['run_name'] = run_name
+    seed = FLAGS.agent['seed']
 
     wandb.init(
-        project='taskmaster',
+        project='taskmaster2',
         entity='kvfransmit',
-        group='Default',
+        group=run_name,
         sync_tensorboard=True,
-        id=run_name,
-        name=run_name,
+        id=run_name+f'-{seed}',
+        name=run_name+f'-{seed}',
         config={'agent': dict(FLAGS.agent), 'env': dict(FLAGS.env), 'experiment': FLAGS.agent['experiment']},
     )
 
