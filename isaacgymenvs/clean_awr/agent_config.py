@@ -65,4 +65,12 @@ ig_push_config = ml_collections.ConfigDict({
     'bounds_loss_coef': 0.0001,
     'truncate_grads': 0,
     'grad_norm': 5,
+    'rnd': {
+        'enable': 0,
+        'coef': 0.1,
+        'warmup': 64,
+        'units': (256, 128, 64),
+        'lr': 30e-5,
+        'batch_size': 1024
+    }
 })

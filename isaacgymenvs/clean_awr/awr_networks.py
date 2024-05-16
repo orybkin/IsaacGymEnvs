@@ -109,3 +109,50 @@ class AWRNetwork(nn.Module):
                 'sigmas' : sigma
             }
             return result
+        
+class RNDNetwork(nn.Module):
+    def __init__(self, config, obs_shape):
+        super().__init__()
+        self.config = config
+        self.obs_shape = obs_shape
+        self.model = _build_sequential_mlp(self.obs_shape[0], self.config['units'])
+        self.target = _build_sequential_mlp(self.obs_shape[0], self.config['units'])
+        self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'])
+        self.rms = RunningMeanStd((1,))
+    
+    def mean(self):
+        return self.rms.running_mean.item()
+    
+    def std(self):
+        return self.rms.running_var.item() ** 0.5
+
+    def normalize(self, loss):
+        reward = (loss - self.mean()) / self.std()
+        reward = torch.clip(reward, -5, 5)
+        return reward
+    
+    def train(self, obs):
+        losses = []
+        self.model.train()
+        for obs_batch in torch.chunk(obs, math.ceil(len(obs) / self.config['batch_size'])):
+            loss = self.loss(obs_batch).mean()
+            losses.append(loss.mean().item())
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+        return torch.tensor(losses).mean()
+    
+    def update_rms(self, obs_batch):
+        with torch.no_grad():
+            self.model.eval()
+            loss = self.loss(obs_batch)
+            self.rms(loss)
+        return self.normalize(loss)
+        
+    def loss(self, obs_batch):
+        """L2 loss per example"""
+        model_out = self.model(obs_batch)
+        target_out = self.target(obs_batch).detach()
+        loss = (model_out - target_out) ** 2
+        loss = loss.mean(dim=1)
+        return loss

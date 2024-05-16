@@ -21,7 +21,9 @@ import os
 import wandb
 from datetime import datetime
 
-from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, _neglogp
+from rl_games.algos_torch.running_mean_std import RunningMeanStd
+
+from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, RNDNetwork, _neglogp, _build_sequential_mlp
 from isaacgymenvs.clean_awr.awr_utils import AWRDataset, Diagnostics, ExperienceBuffer
 from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every
 import ml_collections
@@ -134,6 +136,12 @@ class AWRAgent():
         if self.config['relabel']:
             self.relabeled_dataset = AWRDataset(self.batch_size, self.minibatch_size, self.device)
 
+        if self.config['rnd']['enable']:
+            self.rnd_network = RNDNetwork(self.config['rnd'], self.obs_shape)
+            self.rnd_network.to(self.device)
+            self.game_extrinsic_rewards = torch_ext.AverageMeter(1, self.games_to_track).to(self.device)
+            self.game_shaped_extrinsic_rewards = torch_ext.AverageMeter(1, self.games_to_track).to(self.device)
+
     def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames, phase=''):
         # do we need scaled time?
         self.diagnostics.send_info(self.writer)
@@ -171,6 +179,11 @@ class AWRAgent():
         with torch.no_grad():
             res_dict = self.model(input_dict)
         return res_dict
+    
+    def uniform_action(self):
+        low = self.actions_low.tile((self.config['num_actors'], 1))
+        high = self.actions_high.tile((self.config['num_actors'], 1))
+        return low + (high - low) * torch.rand(low.size(), device=self.device)
     
     def get_values(self, obs):
         return self.run_model(obs)['values']
@@ -479,6 +492,10 @@ class AWRAgent():
         self.current_rewards = torch.zeros(current_rewards_shape, dtype=torch.float32, device=self.device)
         self.current_shaped_rewards = torch.zeros(current_rewards_shape, dtype=torch.float32, device=self.device)
         self.current_lengths = torch.zeros(batch_size, dtype=torch.float32, device=self.device)
+        if self.config['rnd']['enable']:
+            self.current_extrinsic_rewards = torch.zeros(current_rewards_shape, dtype=torch.float32, device=self.device)
+            self.current_shaped_extrinsic_rewards = torch.zeros(current_rewards_shape, dtype=torch.float32, device=self.device)
+            self.current_intrinsic_rewards = torch.zeros(current_rewards_shape, dtype=torch.float32, device=self.device)
         self.dones = torch.ones((batch_size,), dtype=torch.uint8, device=self.device)
         self.update_list = ['actions', 'neglogpacs', 'values', 'mus', 'sigmas']
         self.tensor_list = self.update_list + ['obses', 'states', 'dones']
@@ -492,6 +509,14 @@ class AWRAgent():
         test_check = Every(self.config['test_every_episodes'] * self.vec_env.env.max_episode_length)
         test_render_check = Every(math.ceil(self.vec_env.env.render_every_episodes / self.config['test_every_episodes']))
         test_counter = 0
+
+        if self.config['rnd']['enable']:
+            for m in range(1, self.config['rnd']['warmup'] + 1):
+                actions = self.uniform_action()
+                obs, _, _, _ = self.env_step(actions)
+                self.rnd_network.update_rms(obs['obs'])
+                self.frame += self.config['num_actors']
+            self.obs = self.env_reset()
         self.start_frame = self.frame
 
         while True:
@@ -521,9 +546,14 @@ class AWRAgent():
                     step_time_start = time.time()
                     self.obs, rewards, self.dones, infos = self.env_step(res_dict['actions'])
                     step_time_end = time.time()
-
                     step_time += (step_time_end - step_time_start)
+
                     shaped_rewards = rewards
+                    if self.config['rnd']['enable']:
+                        extrinsic_rewards = torch.clone(rewards)
+                        intrinsic_rewards = self.rnd_network.update_rms(self.obs['obs']).unsqueeze(1)
+                        rewards += self.config['rnd']['coef'] * intrinsic_rewards
+
                     if self.config['value_bootstrap'] and 'time_outs' in infos:
                         shaped_rewards += self.config['gamma'] * res_dict['values'] * self.cast_obs(infos['time_outs']).unsqueeze(1).float()
 
@@ -545,6 +575,21 @@ class AWRAgent():
                     self.current_rewards = self.current_rewards * not_dones.unsqueeze(1)
                     self.current_shaped_rewards = self.current_shaped_rewards * not_dones.unsqueeze(1)
                     self.current_lengths = self.current_lengths * not_dones
+
+                    if self.config['rnd']['enable']:
+                        shaped_extrinsic_rewards = extrinsic_rewards
+                        if self.config['value_bootstrap'] and 'time_outs' in infos:
+                            shaped_extrinsic_rewards += self.config['gamma'] * res_dict['values'] * self.cast_obs(infos['time_outs']).unsqueeze(1).float()
+
+                        self.current_extrinsic_rewards += extrinsic_rewards
+                        self.current_shaped_extrinsic_rewards += shaped_extrinsic_rewards
+                
+                        self.game_extrinsic_rewards.update(self.current_extrinsic_rewards[env_done_indices])
+                        self.game_shaped_extrinsic_rewards.update(self.current_shaped_extrinsic_rewards[env_done_indices])
+
+                        self.current_extrinsic_rewards = self.current_extrinsic_rewards * not_dones.unsqueeze(1)
+                        self.current_shaped_extrinsic_rewards = self.current_shaped_extrinsic_rewards * not_dones.unsqueeze(1)
+                        self.current_intrinsic_rewards = self.current_intrinsic_rewards * not_dones.unsqueeze(1)
 
                 last_values = self.get_values(self.obs)
 
@@ -619,6 +664,11 @@ class AWRAgent():
                 if self.config['normalize_input']:
                     self.model.running_mean_std.eval()
 
+                if self.config['rnd']['enable']:
+                    for i in range(len(self.dataset)):
+                        loss = self.rnd_network.train(self.dataset[i]['obs'])
+                        metrics['rnd/loss'].append(loss.to(self.device))
+
             update_time_end = time.time()
             play_time = play_time_end - play_time_start
             update_time = update_time_end - update_time_start
@@ -650,7 +700,6 @@ class AWRAgent():
                 fps_total = curr_frames / total_time
                 max_epochs = self.config['max_epochs']
                 ep_str = f'/{max_epochs:.0f}' if max_epochs != -1 else ''
-                print(f'rewards: {mean_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str}')
 
                 for i in range(1):
                     rewards_name = 'rewards' if i == 0 else 'rewards{0}'.format(i)
@@ -658,6 +707,16 @@ class AWRAgent():
                     self.writer.add_scalar('shaped_' + rewards_name.format(i), mean_shaped_rewards[i], frame)
 
                 self.writer.add_scalar('episode_lengths', mean_lengths, frame)
+
+                if not self.config['rnd']['enable']:
+                    print(f'rewards: {mean_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str}')
+                else:
+                    mean_extrinsic_rewards = self.game_extrinsic_rewards.get_mean()
+                    mean_shaped_extrinsic_rewards = self.game_shaped_extrinsic_rewards.get_mean()
+                    self.writer.add_scalar('extrinsic_rewards', mean_extrinsic_rewards[0], frame)
+                    self.writer.add_scalar('shaped_extrinsic_rewards', mean_shaped_extrinsic_rewards[0], frame)
+                    print(f'rewards: {mean_rewards[0]:.3f} ext_rewards: {mean_extrinsic_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str}')
+
             update_time = 0
             
             # ===============================
@@ -707,7 +766,7 @@ def main(_):
 
     wandb.init(
         project='taskmaster',
-        entity='kvfransmit',
+        entity='prestonfu',
         group='Default',
         sync_tensorboard=True,
         id=run_name,
@@ -722,11 +781,11 @@ if __name__ == '__main__':
     from isaacgymenvs.clean_awr import agent_config
     from isaacgymenvs.clean_awr import env_config
 
-    config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
-    config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
 
-    # config_flags.DEFINE_config_dict('agent', agent_config.ig_push_config, lock_config=False)
-    # config_flags.DEFINE_config_dict('env', env_config.ig_push_config, lock_config=False)
+    config_flags.DEFINE_config_dict('agent', agent_config.ig_push_config, lock_config=False)
+    config_flags.DEFINE_config_dict('env', env_config.ig_push_config, lock_config=False)
 
 
     app.run(main)
