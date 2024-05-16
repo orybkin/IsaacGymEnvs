@@ -613,22 +613,20 @@ class FrankaPushing(VecTask):
     def reset_idx(self, env_ids=None):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
-        if not self.test and isinstance(self.goal_sampler, GoalSampler):
+        self.reset_idx_agent(env_ids)
+        if False:# not self.test and isinstance(self.goal_sampler, GoalSampler):
             res_dict = self.goal_sampler.sample()
-            self.set_state(res_dict['states'])
-            self.update_cube_states(env_ids)
-            self.gym.simulate(self.sim)
+            for j in range(self.n_cubes_test):
+                self._cube_states[j][env_ids, :3] = res_dict['states'][f'cube{j}_pos'][env_ids]
+                self._cube_states[j][env_ids, 3:7] = res_dict['states'][f'cube{j}_quat'][env_ids]
+                self._cube_states[j][env_ids, 7:10] = res_dict['states'][f'cube{j}_vel'][env_ids]
+            self._reset_goal_state(env_ids=env_ids)
+            self._update_cube_states(env_ids)
             if self.write_fn is not None and 'stats' in res_dict:
                 for k, v in res_dict['stats'].items():
                     self.write_fn(f'curriculum/{k}', v)
         else:
             self.reset_idx_cubes_goals(env_ids)
-            self.reset_idx_agent(env_ids)
-        cube_zs = self._cube_states[0][:,2]
-        cube_z_mean = cube_zs.mean()
-        cube_z_sd = cube_zs.std()
-        # print('debug cube z mean:', cube_z_mean)
-        # print('debug cube z sd:', cube_z_sd)
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         
@@ -642,13 +640,13 @@ class FrankaPushing(VecTask):
             # Write these new init states to the sim states
             self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
         self._reset_goal_state(env_ids=env_ids)
-        self.update_cube_states(env_ids)
+        self._update_cube_states(env_ids)
 
         if not self.test and isinstance(self.goal_sampler, GoalSampler):
             for _ in range(self.goal_sampler.requires_extra_sim):
                 self.gym.simulate(self.sim)
 
-    def update_cube_states(self, env_ids):
+    def _update_cube_states(self, env_ids):
         # Update cube states
         multi_env_ids_cubes_int32 = self._global_indices[env_ids, -(1 + self.n_cubes_test):].flatten()
         self.gym.set_actor_root_state_tensor_indexed(
@@ -1044,7 +1042,6 @@ class FrankaPushing(VecTask):
         if len(env_ids) > 0:
             if isinstance(self.goal_sampler, (GOIDGoalSampler, VDSGoalSampler)) and not self.test:
                 obses = self.experience_buffer.tensor_dict['obses'][0]
-                breakpoint()
                 if isinstance(self.goal_sampler, GOIDGoalSampler):
                     self.reset_counter += 1
                     successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
