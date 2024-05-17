@@ -141,6 +141,7 @@ class AWRAgent():
             self.rnd_network.to(self.device)
             self.game_extrinsic_rewards = torch_ext.AverageMeter(1, self.games_to_track).to(self.device)
             self.game_shaped_extrinsic_rewards = torch_ext.AverageMeter(1, self.games_to_track).to(self.device)
+            self.game_intrinsic_rewards = torch_ext.AverageMeter(1, self.games_to_track).to(self.device)
 
     def write_stats(self, total_time, epoch_num, step_time, play_time, update_time, metrics, last_lr, lr_mul, frame, scaled_time, scaled_play_time, curr_frames, phase=''):
         # do we need scaled time?
@@ -514,7 +515,8 @@ class AWRAgent():
             for m in range(1, self.config['rnd']['warmup'] + 1):
                 actions = self.uniform_action()
                 obs, _, _, _ = self.env_step(actions)
-                self.rnd_network.update_rms(obs['obs'])
+                self.rnd_network.update_rms_obs(obs['obs'])
+                self.rnd_network.update_rms_rewards(obs['obs'])
                 self.frame += self.config['num_actors']
             self.obs = self.env_reset()
         self.start_frame = self.frame
@@ -551,7 +553,8 @@ class AWRAgent():
                     shaped_rewards = rewards
                     if self.config['rnd']['enable']:
                         extrinsic_rewards = torch.clone(rewards)
-                        intrinsic_rewards = self.rnd_network.update_rms(self.obs['obs']).unsqueeze(1)
+                        self.rnd_network.update_rms_obs(self.obs['obs'])
+                        intrinsic_rewards = self.rnd_network.update_rms_rewards(self.obs['obs']).unsqueeze(1)
                         rewards += self.config['rnd']['coef'] * intrinsic_rewards
 
                     if self.config['value_bootstrap'] and 'time_outs' in infos:
@@ -583,9 +586,11 @@ class AWRAgent():
 
                         self.current_extrinsic_rewards += extrinsic_rewards
                         self.current_shaped_extrinsic_rewards += shaped_extrinsic_rewards
+                        self.current_intrinsic_rewards += intrinsic_rewards
                 
                         self.game_extrinsic_rewards.update(self.current_extrinsic_rewards[env_done_indices])
                         self.game_shaped_extrinsic_rewards.update(self.current_shaped_extrinsic_rewards[env_done_indices])
+                        self.game_intrinsic_rewards.update(self.current_intrinsic_rewards[env_done_indices])
 
                         self.current_extrinsic_rewards = self.current_extrinsic_rewards * not_dones.unsqueeze(1)
                         self.current_shaped_extrinsic_rewards = self.current_shaped_extrinsic_rewards * not_dones.unsqueeze(1)
@@ -713,9 +718,11 @@ class AWRAgent():
                 else:
                     mean_extrinsic_rewards = self.game_extrinsic_rewards.get_mean()
                     mean_shaped_extrinsic_rewards = self.game_shaped_extrinsic_rewards.get_mean()
+                    mean_intrinsic_rewards = self.game_intrinsic_rewards.get_mean()
                     self.writer.add_scalar('extrinsic_rewards', mean_extrinsic_rewards[0], frame)
                     self.writer.add_scalar('shaped_extrinsic_rewards', mean_shaped_extrinsic_rewards[0], frame)
-                    print(f'rewards: {mean_rewards[0]:.3f} ext_rewards: {mean_extrinsic_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str}')
+                    self.writer.add_scalar('intrinsic_rewards', mean_intrinsic_rewards[0], frame)
+                    print(f'rewards: {mean_rewards[0]:.3f} ext_rewards: {mean_extrinsic_rewards[0]:.3f} int_rewards: {mean_intrinsic_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str}')
 
             update_time = 0
             

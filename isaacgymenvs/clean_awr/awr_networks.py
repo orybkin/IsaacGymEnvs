@@ -118,18 +118,33 @@ class RNDNetwork(nn.Module):
         self.model = _build_sequential_mlp(self.obs_shape[0], self.config['units'])
         self.target = _build_sequential_mlp(self.obs_shape[0], self.config['units'])
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'])
-        self.rms = RunningMeanStd((1,))
+        self.rms_obs = RunningMeanStd(self.obs_shape)
+        self.rms_rewards = RunningMeanStd((1,))
     
-    def mean(self):
-        return self.rms.running_mean.item()
+    def mean(self, running):
+        return running.running_mean
     
-    def std(self):
-        return self.rms.running_var.item() ** 0.5
+    def std(self, running):
+        return running.running_var ** 0.5
 
-    def normalize(self, loss):
-        reward = (loss - self.mean()) / self.std()
-        reward = torch.clip(reward, -5, 5)
-        return reward
+    def normalize_obs(self, obs_batch):
+        out = (obs_batch - self.mean(self.rms_obs)) / self.std(self.rms_obs)
+        out = torch.clip(out, -5., 5.)
+        return out.float()
+
+    def normalize_rewards(self, loss):
+        return (loss / self.std(self.rms_rewards)).float()
+    
+    def update_rms_obs(self, obs_batch):
+        self.rms_obs(obs_batch)
+        return self.normalize_obs(obs_batch)
+    
+    def update_rms_rewards(self, obs_batch):
+        with torch.no_grad():
+            self.model.eval()
+            loss = self.loss(obs_batch)
+            self.rms_rewards(loss)
+        return self.normalize_rewards(loss)
     
     def train(self, obs):
         losses = []
@@ -141,16 +156,10 @@ class RNDNetwork(nn.Module):
             loss.backward()
             self.optimizer.step()
         return torch.tensor(losses).mean()
-    
-    def update_rms(self, obs_batch):
-        with torch.no_grad():
-            self.model.eval()
-            loss = self.loss(obs_batch)
-            self.rms(loss)
-        return self.normalize(loss)
         
     def loss(self, obs_batch):
         """L2 loss per example"""
+        obs_batch = self.normalize_obs(obs_batch)
         model_out = self.model(obs_batch)
         target_out = self.target(obs_batch).detach()
         loss = (model_out - target_out) ** 2
