@@ -30,6 +30,9 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
         patchelf build-essential libssl-dev libffi-dev libxml2-dev libxslt1-dev \
         zlib1g-dev libglew-dev libosmesa6-dev libgl1-mesa-glx libglfw3
 
+    # other
+    apt-get install libglib2.0-0 -y
+
     # Force gcc 8 to avoid CUDA 10 build issues on newer base OS 
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 8
