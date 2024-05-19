@@ -110,41 +110,62 @@ class AWRNetwork(nn.Module):
             }
             return result
         
+class RunningStats:
+    def __init__(self, d, alpha, device):
+        self.alpha = alpha  # alpha near 1 heavily weights most recent batch
+        self.d = d
+        self.mean = torch.zeros(d, device=device)
+        self.var = torch.zeros(d, device=device)
+
+    def update(self, batch):
+        if batch.ndim == 1:
+            batch = batch.unsqueeze(1)
+        assert batch.ndim == 2 and batch.shape[1] == self.d
+        batch_mean = batch.mean(dim=0)
+        delta = batch_mean - self.mean
+        self.mean += self.alpha * delta
+        batch_var = batch.var(dim=0, unbiased=False)
+        self.var = (1 - self.alpha) * (self.var + self.alpha * delta * delta) + self.alpha * batch_var
+
+    @property
+    def std(self):
+        return torch.sqrt(self.var)
+    
+    def zscore(self, x, eps=1e-12):
+        return (x - self.mean) / (self.std + eps)
+       
 class RNDNetwork(nn.Module):
-    def __init__(self, config, obs_shape):
+    def __init__(self, config, obs_shape, device):
         super().__init__()
         self.config = config
         self.obs_shape = obs_shape
+        self.device = device
         self.model = _build_sequential_mlp(self.obs_shape[0], self.config['units'])
         self.target = _build_sequential_mlp(self.obs_shape[0], self.config['units'])
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'])
-        self.rms_obs = RunningMeanStd(self.obs_shape)
-        self.rms_rewards = RunningMeanStd((1,))
-    
-    def mean(self, running):
-        return running.running_mean
-    
-    def std(self, running):
-        return running.running_var ** 0.5
+        self.rms_obs = RunningStats(self.obs_shape[0], alpha=self.config['running_stats_alpha'], device=device)
+        self.rms_loss = RunningStats(1, alpha=self.config['running_stats_alpha'], device=device)
 
     def normalize_obs(self, obs_batch):
-        out = (obs_batch - self.mean(self.rms_obs)) / self.std(self.rms_obs)
+        out = self.rms_obs.zscore(obs_batch)
         out = torch.clip(out, -5., 5.)
         return out.float()
 
-    def normalize_rewards(self, loss):
-        return (loss / self.std(self.rms_rewards)).float()
+    def normalize_loss(self, loss):
+        out = self.rms_loss.zscore(loss)
+        out = torch.clip(out, -5., 5.)
+        return out.float()
     
     def update_rms_obs(self, obs_batch):
-        self.rms_obs(obs_batch)
+        self.rms_obs.update(obs_batch)
         return self.normalize_obs(obs_batch)
     
-    def update_rms_rewards(self, obs_batch):
+    def update_rms_loss(self, obs_batch):
         with torch.no_grad():
             self.model.eval()
             loss = self.loss(obs_batch)
-            self.rms_rewards(loss)
-        return self.normalize_rewards(loss)
+            self.rms_loss.update(loss)
+        return self.normalize_loss(loss)
     
     def train(self, obs):
         losses = []

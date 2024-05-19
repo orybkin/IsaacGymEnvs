@@ -68,9 +68,11 @@ ig_push_config = ml_collections.ConfigDict({
     'rnd': {
         'enable': 0,
         'coef': 0.1,
-        'warmup': 64,
+        'warmup_steps': 50,
+        'warmup_epochs': 20,
         'units': (256, 128, 64),
         'lr': 30e-5,
-        'batch_size': 1024
+        'batch_size': 1024,
+        'running_stats_alpha': 0.1
     }
 })

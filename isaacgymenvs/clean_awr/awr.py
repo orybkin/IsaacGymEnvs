@@ -137,7 +137,7 @@ class AWRAgent():
             self.relabeled_dataset = AWRDataset(self.batch_size, self.minibatch_size, self.device)
 
         if self.config['rnd']['enable']:
-            self.rnd_network = RNDNetwork(self.config['rnd'], self.obs_shape)
+            self.rnd_network = RNDNetwork(self.config['rnd'], self.obs_shape, self.device)
             self.rnd_network.to(self.device)
             self.game_extrinsic_rewards = torch_ext.AverageMeter(1, self.games_to_track).to(self.device)
             self.game_shaped_extrinsic_rewards = torch_ext.AverageMeter(1, self.games_to_track).to(self.device)
@@ -512,14 +512,25 @@ class AWRAgent():
         test_counter = 0
 
         if self.config['rnd']['enable']:
-            for m in range(1, self.config['rnd']['warmup'] + 1):
+            warmup_steps = self.config['rnd']['warmup_steps']
+            warmup_epochs = self.config['rnd']['warmup_epochs']
+            warmup_obs_buf = torch.zeros((warmup_steps, self.config['num_actors'], self.obs_shape[0]), device=self.device)
+            for m in range(warmup_steps):
                 actions = self.uniform_action()
                 obs, _, _, _ = self.env_step(actions)
                 self.rnd_network.update_rms_obs(obs['obs'])
-                self.rnd_network.update_rms_rewards(obs['obs'])
+                warmup_obs_buf[m] = obs['obs']
                 self.frame += self.config['num_actors']
+            for warmup_ep in range(warmup_epochs):
+                loss = self.rnd_network.train(warmup_obs_buf.view(-1, self.obs_shape[0]))
+                print(warmup_ep, loss)
+                self.writer.add_scalar('rnd/loss', loss, self.frame * (warmup_ep + 1) // warmup_epochs)
+            for m in range(math.ceil(0.8 * warmup_steps), warmup_steps):
+                self.rnd_network.update_rms_loss(warmup_obs_buf[m])
             self.obs = self.env_reset()
         self.start_frame = self.frame
+
+        breakpoint()
 
         while True:
             self.epoch_num += 1
@@ -554,7 +565,7 @@ class AWRAgent():
                     if self.config['rnd']['enable']:
                         extrinsic_rewards = torch.clone(rewards)
                         self.rnd_network.update_rms_obs(self.obs['obs'])
-                        intrinsic_rewards = self.rnd_network.update_rms_rewards(self.obs['obs']).unsqueeze(1)
+                        intrinsic_rewards = self.rnd_network.update_rms_loss(self.obs['obs']).unsqueeze(1)
                         rewards += self.config['rnd']['coef'] * intrinsic_rewards
 
                     if self.config['value_bootstrap'] and 'time_outs' in infos:
@@ -673,6 +684,8 @@ class AWRAgent():
                     for i in range(len(self.dataset)):
                         loss = self.rnd_network.train(self.dataset[i]['obs'])
                         metrics['rnd/loss'].append(loss.to(self.device))
+                    metrics['rnd/loss_mean'].append(self.rnd_network.rms_loss.mean)
+                    metrics['rnd/loss_std'].append(self.rnd_network.rms_loss.std)
 
             update_time_end = time.time()
             play_time = play_time_end - play_time_start
@@ -708,8 +721,8 @@ class AWRAgent():
 
                 for i in range(1):
                     rewards_name = 'rewards' if i == 0 else 'rewards{0}'.format(i)
-                    self.writer.add_scalar(rewards_name.format(i), mean_rewards[i], frame)
-                    self.writer.add_scalar('shaped_' + rewards_name.format(i), mean_shaped_rewards[i], frame)
+                    self.writer.add_scalar('rewards/' + rewards_name.format(i), mean_rewards[i], frame)
+                    self.writer.add_scalar('rewards/shaped_' + rewards_name.format(i), mean_shaped_rewards[i], frame)
 
                 self.writer.add_scalar('episode_lengths', mean_lengths, frame)
 
@@ -719,9 +732,9 @@ class AWRAgent():
                     mean_extrinsic_rewards = self.game_extrinsic_rewards.get_mean()
                     mean_shaped_extrinsic_rewards = self.game_shaped_extrinsic_rewards.get_mean()
                     mean_intrinsic_rewards = self.game_intrinsic_rewards.get_mean()
-                    self.writer.add_scalar('extrinsic_rewards', mean_extrinsic_rewards[0], frame)
-                    self.writer.add_scalar('shaped_extrinsic_rewards', mean_shaped_extrinsic_rewards[0], frame)
-                    self.writer.add_scalar('intrinsic_rewards', mean_intrinsic_rewards[0], frame)
+                    self.writer.add_scalar('rewards/extrinsic_rewards', mean_extrinsic_rewards[0], frame)
+                    self.writer.add_scalar('rewards/shaped_extrinsic_rewards', mean_shaped_extrinsic_rewards[0], frame)
+                    self.writer.add_scalar('rewards/intrinsic_rewards', mean_intrinsic_rewards[0], frame)
                     print(f'rewards: {mean_rewards[0]:.3f} ext_rewards: {mean_extrinsic_rewards[0]:.3f} int_rewards: {mean_intrinsic_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str}')
 
             update_time = 0
