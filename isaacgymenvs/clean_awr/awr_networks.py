@@ -153,7 +153,6 @@ class RNDNetwork(nn.Module):
 
     def normalize_loss(self, loss):
         out = self.rms_loss.zscore(loss)
-        out = torch.clip(out, -5., 5.)
         return out.float()
     
     def update_rms_obs(self, obs_batch):

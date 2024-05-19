@@ -523,14 +523,12 @@ class AWRAgent():
                 self.frame += self.config['num_actors']
             for warmup_ep in range(warmup_epochs):
                 loss = self.rnd_network.train(warmup_obs_buf.view(-1, self.obs_shape[0]))
-                print(warmup_ep, loss)
                 self.writer.add_scalar('rnd/loss', loss, self.frame * (warmup_ep + 1) // warmup_epochs)
             for m in range(math.ceil(0.8 * warmup_steps), warmup_steps):
                 self.rnd_network.update_rms_loss(warmup_obs_buf[m])
             self.obs = self.env_reset()
-        self.start_frame = self.frame
 
-        breakpoint()
+        self.start_frame = self.frame
 
         while True:
             self.epoch_num += 1
