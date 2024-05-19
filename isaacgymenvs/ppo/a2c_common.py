@@ -31,6 +31,9 @@ from collections import defaultdict
 
 from rl_games.common import common_losses
 
+import matplotlib.pyplot as plt
+import wandb
+
 
 def swap_and_flatten01(arr):
     """
@@ -788,7 +791,34 @@ class A2CBase(BaseAlgorithm):
 
         step_time = 0.0
 
+        # mode = 'debug'
+        mode = 'base'
+
         for n in range(self.horizon_length):
+            # print(self.vec_env.env._root_state[:, 8, :3])
+            if self.epoch_num % 100 in range(1, 5):
+                for key in ['cube0_pos']:#, 'goal_pos']:
+                    for i, dim in enumerate(['x', 'y', 'z']):
+                        data = self.vec_env.env.states[key][:, i].cpu().numpy()
+                        if n <= 2 or n >= 62:
+                            lower_quantile, upper_quantile = np.quantile(data, [0.25, 0.75])
+                            interquantile = data[(lower_quantile < data) & (data < upper_quantile)]
+                            trimmed_mean = interquantile.mean() if len(interquantile) > 0 else lower_quantile
+                            # print('n =', n, key, dim, 'trimmed mean =', trimmed_mean, 'mean =', data.mean(), 'std =', data.std())#, 'min=', data.min(), 'max=', data.max())
+                        # if n <= n % 16 == 0:
+                            plt.clf()
+                            fig = plt.figure()
+                            plt.hist(data, bins=30)
+                            # if dim in ['x', 'y']:
+                            #     plt.xlim([-.2, .2])
+                            # else:
+                            #     plt.xlim([0.9, 1.4])
+                            # fname = f'{mode}_{key}_{dim}_{n}'
+                            # plt.title(fname)
+                            # plt.savefig(f'data/sampling/{fname}.png')
+                            wandb.log({f'state_distribution/{key}_{dim}_{n}': [wandb.Image(fig)]})
+                            plt.close()
+            
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)

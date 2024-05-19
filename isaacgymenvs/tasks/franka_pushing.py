@@ -532,8 +532,8 @@ class FrankaPushing(VecTask):
         # Refresh states
         self._update_states()
 
-    def compute_observations(self):
-        self._refresh()
+    @property
+    def obs_keys(self):
         obs = ["eef_pos", "eef_quat", "goal_pos"]
         if self.observe_velocities:
             obs += ["eef_vel"]
@@ -542,10 +542,12 @@ class FrankaPushing(VecTask):
             if self.observe_velocities:
                 obs += [f"cube{j}_angvel"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
-        self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
+        return obs
 
-        maxs = {ob: torch.max(self.states[ob]).item() for ob in obs}
-
+    def compute_observations(self):
+        self._refresh()
+        self.obs_buf = torch.cat([self.states[ob] for ob in self.obs_keys], dim=-1)
+        maxs = {ob: torch.max(self.states[ob]).item() for ob in self.obs_keys}
         return self.obs_buf
     
     def _compute_pixel_obs_save(self):
@@ -599,27 +601,14 @@ class FrankaPushing(VecTask):
     def reset_idx(self, env_ids=None):
         if not self.test and isinstance(self.goal_sampler, GoalSampler):
             res_dict = self.goal_sampler.sample()
+            # self.reset_idx_cubes_goals()
             for j in range(self.n_cubes_test):
-                self._cube_states[j][env_ids, :3] = res_dict['states'][f'cube{j}_pos'][env_ids]
-                self._cube_states[j][env_ids, 3:7] = res_dict['states'][f'cube{j}_quat'][env_ids]
-                self._cube_states[j][env_ids, 7:10] = res_dict['states'][f'cube{j}_vel'][env_ids]
+                self._init_cube_states[j][env_ids, :3] = res_dict['states'][f'cube{j}_pos'][env_ids]
+                self._init_cube_states[j][env_ids, 3:7] = res_dict['states'][f'cube{j}_quat'][env_ids]
+                self._init_cube_states[j][env_ids, 7:10] = res_dict['states'][f'cube{j}_vel'][env_ids]
+                self._cube_states[j][env_ids] = self._init_cube_states[j][env_ids]
+            self._goal_state[env_ids, :3] = res_dict['states']['goal_pos'][env_ids]
             self._update_cube_states(env_ids)
-            
-            # print("\nhere1")
-            # print(self._root_state[:, 8, :3])
-            # print(self.states['cube0_pos'])
-            # print(self._cube_states[0][:, :3])
-            # print("\nhere2")
-            # print(self._root_state[:, 8, :3])
-            # print(self.states['cube0_pos'])
-            # print(self._cube_states[0][:, :3])
-            
-            # print("\nhere3")
-            # print(self._root_state[:, 8, :3])
-            # print(self.states['cube0_pos'])
-            # print(self._cube_states[0][:, :3])
-            # breakpoint()
-            # self.gym.simulate(self.sim)
         else:
             self.reset_idx_cubes_goals(env_ids)
         self.reset_idx_agent(env_ids)
@@ -700,8 +689,12 @@ class FrankaPushing(VecTask):
         states, obses = [], []
         for _ in range(n_candidates):
             self.reset_idx_cubes_goals()
-            obses.append(self.compute_observations())
-            states.append(deepcopy(self.states))
+            self._refresh()
+            # obses.append(self.compute_observations())
+            sampled_states = deepcopy(self.states)
+            sampled_obs = torch.cat([sampled_states[ob] for ob in self.obs_keys], dim=-1)
+            states.append(sampled_states)
+            obses.append(sampled_obs)
         return states, obses
 
     def freeze_cubes(self):

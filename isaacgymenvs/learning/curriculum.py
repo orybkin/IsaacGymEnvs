@@ -30,14 +30,14 @@ class UniformGoalSampler(GoalSampler):
         return {'states': states[0], 'obs': obs[0]}
     
 class MultipleGoalSampler(GoalSampler):
-    def __init__(self, env, n_samples=3):
+    def __init__(self, env, n_samples=10):
         super().__init__('multiple', env)
         self.n_samples = n_samples
         
     def sample(self):
         states, obs = self.env.sample_goals(self.n_samples)
         assert torch.any(obs[0] != obs[1])
-        assert torch.any(states[0]['cube0_pos'] != states[1]['cube0_pos'])
+        assert torch.any( states[0]['cube0_pos'] != states[1]['cube0_pos'])
         # print('\ndebug sampling\n')
         # for i in range(3):
         #     print(states[i]['cube0_pos'])
