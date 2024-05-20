@@ -59,7 +59,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
         self.success_metric = cfg['config']['success_metric']
         self.collect_data = cfg['config']['collect_data']
         self.viz_every = cfg['config']['visualize_every']
-        self.viz_size = 8
+        self.has_viz &= bool(self.viz_every)
         
         self.units = cfg['mlp']['units']
         self.activation = cfg['mlp']['activation']
@@ -90,7 +90,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
                     nn.init.zeros_(m.bias)
 
         self.lr = cfg['config']['learning_rate']
-        self.gradient_steps = cfg['config']['gradient_steps']
+        self.n_epochs = cfg['config']['n_epochs']
         self.batch_size = cfg['config']['batch_size']
         self.optimizer = optim.Adam(self.model.parameters(), self.lr)
         self.loss_fn = nn.BCELoss()
@@ -98,30 +98,25 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
     def forward(self, x):
         return self.model(x.view(-1, self.obs_dim))
     
-    def train(self, obs_batch, success_batch):
-        assert self.batch_size == len(obs_batch) == len(success_batch)
+    def train_epochs(self, dataloader):
         self.model.train()
-        train_loss = train_accuracy = eval_loss = eval_accuracy = None
-        for i in range(self.gradient_steps):
-            out = self(obs_batch)
-            accuracy = torch.mean(((out >= 0.5).float() == success_batch).float())
-            loss = self.loss_fn(out, success_batch)
-            if i == 0:
-                eval_accuracy = accuracy
-                eval_loss = loss
-            if i == self.gradient_steps - 1:
-                train_accuracy = accuracy
-                train_loss = loss
-            self.optimizer.zero_grad()
-            loss.backward()
-            self.optimizer.step()
-            
-        return {
-            'goid_eval_accuracy': eval_accuracy,
-            'goid_eval_loss': eval_loss,
-            'goid_train_accuracy': train_accuracy,
-            'goid_train_loss': train_loss,
-        }
+        res_dict = {'loss': [], 'accuracy': []}
+        for i in range(self.n_epochs):
+            epoch_losses, epoch_accuracies = [], []
+            for obs_batch, success_batch in dataloader:
+                obs_batch = obs_batch.to(self.device)
+                success_batch = success_batch.to(self.device)
+                out = self(obs_batch)
+                loss = self.loss_fn(out, success_batch)
+                accuracy = torch.mean(((out >= 0.5).float() == success_batch).float())
+                epoch_losses.append(loss.mean().item())
+                epoch_accuracies.append(accuracy.mean().item())
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+            res_dict['loss'].append(np.mean(epoch_losses))
+            res_dict['accuracy'].append(np.mean(epoch_accuracies))
+        return res_dict
     
     def sample(self):
         self.model.eval()
@@ -192,7 +187,8 @@ class VDSGoalSampler(GoalSampler):
         self.algo_name = algo_name
         self.temperature = cfg.get('temperature', 1)
         self.n_candidates = cfg.get('n_candidates', 1)
-        self.viz_every = cfg.get('visualize_every', None)
+        self.viz_every = cfg.get('visualize_every', 0)
+        self.has_viz &= bool(self.viz_every)
         fn_name_to_fn = {
             'var': lambda vals: torch.var(vals, correction=0, dim=0),
             'std': lambda vals: torch.std(vals, correction=0, dim=0),

@@ -154,7 +154,7 @@ class A2CBase(BaseAlgorithm):
         else:
             self.vec_env = config.get('vec_env', None)
 
-        self.ppo_device = config.get('device', 'cuda:0')
+        self.ppo_device = self.vec_env.env.ppo_device = config.get('device', 'cuda:0')
         self.value_size = self.env_info.get('value_size',1)
         self.observation_space = self.env_info['observation_space']
         self.weight_decay = config.get('weight_decay', 0.0)
@@ -334,6 +334,7 @@ class A2CBase(BaseAlgorithm):
                 self.writer = writer
         else:
             self.writer = None
+        self.vec_env.env.write_fn = self.writer.add_scalar
 
         self.value_bootstrap = self.config.get('value_bootstrap')
         self.use_smooth_clamp = self.config.get('use_smooth_clamp', False)
@@ -506,7 +507,8 @@ class A2CBase(BaseAlgorithm):
             'use_action_masks' : self.use_action_masks
         }
         self.experience_buffer = ExperienceBuffer(self.env_info, algo_info, self.ppo_device)
-
+        if self.use_curriculum in ('goid', 'vds'):
+            self.vec_env.env.experience_buffer = self.experience_buffer
         algo_info = {
             'num_actors' : self.vec_env.env.max_pix,
             'horizon_length' : self.vec_env.env.max_episode_length,
@@ -791,39 +793,13 @@ class A2CBase(BaseAlgorithm):
 
         step_time = 0.0
 
-        # mode = 'debug'
-        mode = 'base'
-
-        for n in range(self.horizon_length):
-            # print(self.vec_env.env._root_state[:, 8, :3])
-            if self.epoch_num % 100 in range(1, 5):
-                for key in ['cube0_pos']:#, 'goal_pos']:
-                    for i, dim in enumerate(['x', 'y', 'z']):
-                        data = self.vec_env.env.states[key][:, i].cpu().numpy()
-                        if n <= 2 or n >= 62:
-                            lower_quantile, upper_quantile = np.quantile(data, [0.25, 0.75])
-                            interquantile = data[(lower_quantile < data) & (data < upper_quantile)]
-                            trimmed_mean = interquantile.mean() if len(interquantile) > 0 else lower_quantile
-                            # print('n =', n, key, dim, 'trimmed mean =', trimmed_mean, 'mean =', data.mean(), 'std =', data.std())#, 'min=', data.min(), 'max=', data.max())
-                        # if n <= n % 16 == 0:
-                            plt.clf()
-                            fig = plt.figure()
-                            plt.hist(data, bins=30)
-                            # if dim in ['x', 'y']:
-                            #     plt.xlim([-.2, .2])
-                            # else:
-                            #     plt.xlim([0.9, 1.4])
-                            # fname = f'{mode}_{key}_{dim}_{n}'
-                            # plt.title(fname)
-                            # plt.savefig(f'data/sampling/{fname}.png')
-                            wandb.log({f'state_distribution/{key}_{dim}_{n}': [wandb.Image(fig)]})
-                            plt.close()
-            
+        for n in range(self.horizon_length):          
             if self.use_action_masks:
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
-                res_dict = self.run_model(self.obs)
+                with torch.no_grad():
+                    res_dict = self.run_model(self.obs)
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
 
@@ -908,7 +884,8 @@ class A2CBase(BaseAlgorithm):
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
-                res_dict = self.run_model(self.obs)
+                with torch.no_grad():
+                    res_dict = self.run_model(self.obs)
 
             self.rnn_states = res_dict['rnn_states']
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
@@ -1333,11 +1310,10 @@ class ContinuousA2CBase(A2CBase):
 
         self.set_eval()
         play_time_start = time.time()
-        with torch.no_grad():
-            if self.is_rnn:
-                batch_dict = self.play_steps_rnn()
-            else:
-                batch_dict = self.play_steps()
+        if self.is_rnn:
+            batch_dict = self.play_steps_rnn()
+        else:
+            batch_dict = self.play_steps()
 
         play_time_end = time.time()
         update_time_start = time.time()

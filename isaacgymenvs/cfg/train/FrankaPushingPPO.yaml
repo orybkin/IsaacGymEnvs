@@ -9,6 +9,9 @@ params:
   network:
     name: actor_critic
     separate: False
+    num_critics: 1
+    shared_encoder: False
+    critic_loss_mode: mean
 
     space:
       continuous:
@@ -81,7 +84,7 @@ params:
       n_candidates: 1
       temperature: 1
       disagreement_fn_name: std
-      visualize_every: None
+      visualize_every: 0
     goid:
       intermediate:
         lower: 0.1
@@ -98,8 +101,8 @@ params:
           name: None
       config:
         batch_size: 256
-        gradient_steps: 10
+        n_epochs: 10
         learning_rate: 5e-4
         success_metric: success_4
         collect_data: False
-        visualize_every: None
+        visualize_every: 0

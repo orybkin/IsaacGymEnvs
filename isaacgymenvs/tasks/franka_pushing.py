@@ -30,14 +30,14 @@ import numpy as np
 import os
 import torch
 import math
-from copy import deepcopy
+from torch.utils.data import DataLoader, TensorDataset
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.learning.curriculum import GoalSampler
+from isaacgymenvs.learning.curriculum import GoalSampler, GOIDGoalSampler, VDSGoalSampler
 
 
 @torch.jit.script
@@ -180,6 +180,7 @@ class FrankaPushing(VecTask):
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
 
         self.goal_sampler = None     # filled in later
+        self.reset_counter = 0
 
         # Reset all environments
         self.reset_idx()
@@ -550,6 +551,16 @@ class FrankaPushing(VecTask):
         maxs = {ob: torch.max(self.states[ob]).item() for ob in self.obs_keys}
         return self.obs_buf
     
+    @property
+    def obs_buf_idx(self):
+        res = {}
+        idx = 0
+        for obs_key in self.obs_keys:
+            size = self.states[obs_key].shape[1]
+            res[obs_key] = (idx, idx+size)
+            idx += size
+        return res
+    
     def _compute_pixel_obs_save(self):
         """Save images for debugging"""
         img = []
@@ -601,7 +612,6 @@ class FrankaPushing(VecTask):
     def reset_idx(self, env_ids=None):
         if not self.test and isinstance(self.goal_sampler, GoalSampler):
             res_dict = self.goal_sampler.sample()
-            # self.reset_idx_cubes_goals()
             for j in range(self.n_cubes_test):
                 self._init_cube_states[j][env_ids, :3] = res_dict['states'][f'cube{j}_pos'][env_ids]
                 self._init_cube_states[j][env_ids, 3:7] = res_dict['states'][f'cube{j}_quat'][env_ids]
@@ -690,8 +700,7 @@ class FrankaPushing(VecTask):
         for _ in range(n_candidates):
             self.reset_idx_cubes_goals()
             self._refresh()
-            # obses.append(self.compute_observations())
-            sampled_states = deepcopy(self.states)
+            sampled_states = {k: torch.clone(v) for k, v in self.states.items()}
             sampled_obs = torch.cat([sampled_states[ob] for ob in self.obs_keys], dim=-1)
             states.append(sampled_states)
             obses.append(sampled_obs)
@@ -911,6 +920,15 @@ class FrankaPushing(VecTask):
         # Lastly, set these sampled values as the new init state
         self._goal_state[env_ids, :] = sampled_goal_state
 
+    def _goal_grid(self, obses, grid_resolution):
+        obs = obses[np.random.randint(len(obses))]
+        obs = torch.tile(obs, (grid_resolution**2, 1))
+        idx_start, idx_end = self.obs_buf_idx['goal_pos']
+        grid_x = grid_y = np.linspace(-self.goal_position_noise, self.goal_position_noise, grid_resolution + 1, endpoint=False)[1:]
+        mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
+        goal_pos = np.hstack((mesh_x.reshape(-1, 1), mesh_y.reshape(-1, 1)))
+        obs[:, idx_start : idx_start + 2] = torch.tensor(goal_pos, device=self.device, dtype=torch.float32)
+        return obs
 
     def _compute_osc_torques(self, dpose):
         # Solve for Operational Space Control # Paper: khatib.stanford.edu/publications/pdfs/Khatib_1987_RA.pdf
@@ -968,8 +986,7 @@ class FrankaPushing(VecTask):
         self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(self._pos_control))
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self._effort_control))
 
-    def post_physics_step(self):
-        # Increment counter
+    def post_physics_step(self):# Increment counter
         self.progress_buf += 1
         self.reset_buf[:] = torch.where((self.progress_buf >= self.max_episode_length), torch.ones_like(self.reset_buf), self.reset_buf)
         self.done = self.reset_buf.clone()
@@ -1014,6 +1031,37 @@ class FrankaPushing(VecTask):
         # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
+            if isinstance(self.goal_sampler, (GOIDGoalSampler, VDSGoalSampler)) and not self.test:
+                obses = self.experience_buffer.tensor_dict['obses'][0]
+                if isinstance(self.goal_sampler, GOIDGoalSampler):
+                    self.reset_counter += 1
+                    successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
+                    if self.goal_sampler.collect_data:
+                        save_dir = 'data/goid'
+                        os.makedirs(save_dir, exist_ok=True)
+                        np.save(f'{save_dir}/obs{self.reset_counter}', obses.cpu().numpy())
+                        np.save(f'{save_dir}/success{self.reset_counter}', successes.cpu().numpy())
+
+                    dataset = TensorDataset(obses, successes)
+                    dataloader = DataLoader(dataset, batch_size=self.goal_sampler.batch_size, shuffle=True)
+                    res_dict = self.goal_sampler.train_epochs(dataloader)
+                    res_dict = {
+                        'loss_first': res_dict['loss'][0],
+                        'loss_last': res_dict['loss'][-1],
+                        'accuracy_first': res_dict['accuracy'][0],
+                        'accuracy_last': res_dict['accuracy'][-1],
+                    }
+                    self.extras["curriculum"] = {'goid_epochs': self.reset_counter * self.goal_sampler.n_epochs, **res_dict}
+
+                if self.goal_sampler.has_viz and self.reset_counter % self.goal_sampler.viz_every == 0:
+                    obs = self._goal_grid(obses, grid_resolution=16)
+                    fig = self.goal_sampler.viz(obs)
+                    update_dict = {self.goal_sampler.name + "_viz": fig}
+                    if "curriculum" in self.extras:
+                        self.extras["curriculum"].update(update_dict)
+                    else:
+                        self.extras["curriculum"] = update_dict
+            
             self.reset_idx(env_ids)
         # debug viz
         # if self.viewer and self.debug_viz:

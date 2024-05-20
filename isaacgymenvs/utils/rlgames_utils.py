@@ -40,6 +40,7 @@ import pathlib
 from rl_games.common import env_configurations, vecenv
 import wandb
 from isaacgymenvs.ppo.algo_observer import AlgoObserver
+from matplotlib.figure import Figure
 
 from isaacgymenvs.tasks import isaacgym_task_map
 from isaacgymenvs.utils.utils import set_seed, flatten_dict
@@ -146,6 +147,7 @@ class RLGPUAlgoObserver(AlgoObserver):
         self.episode_cumulative_avg = dict()
         self.episodic = dict()
         self.episodic_stats = dict()
+        self.curriculum = dict()
         self.videos = []
         self.new_finished_episodes = False
         self.experiment_name = experiment_name
@@ -208,6 +210,15 @@ class RLGPUAlgoObserver(AlgoObserver):
                     self.episodic[key] = []
                 
                 # assert len(done_indices) == data.shape[1]
+                
+        if 'curriculum' in infos:
+            for key, value in infos['curriculum'].items():
+                if isinstance(value, torch.Tensor):
+                    if value.requires_grad_:
+                        value = value.detach()
+                    self.curriculum[key] = value.cpu().numpy()
+                else:
+                    self.curriculum[key] = value
 
         # turn nested infos into summary keys (i.e. infos['scalars']['lr'] -> infos['scalars/lr']
         if len(infos) > 0 and isinstance(infos, dict):  # allow direct logging from env
@@ -243,6 +254,11 @@ class RLGPUAlgoObserver(AlgoObserver):
             for metric, value in self.episodic_stats.items():
                 for stat, scalar in value.items():
                     self.writer.add_scalar(f'episodic_stats{phase}/{metric}_{stat}', np.mean(scalar), frame)
+            for key, value in self.curriculum.items():
+                if isinstance(value, Figure):
+                    wandb.log({f'curriculum/{key}': [wandb.Image(value)]})
+                else:
+                    self.writer.add_scalar(f'curriculum/{key}', np.mean(value))
             self.episodic_stats = dict()
 
             self.new_finished_episodes = False
@@ -312,8 +328,8 @@ class RLGPUEnv(vecenv.IVecEnv):
     def step(self, actions):
         return self.env.step(actions)
 
-    def reset(self):
-        return self.env.reset()
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
     
     def reset_done(self):
         return self.env.reset_done()
