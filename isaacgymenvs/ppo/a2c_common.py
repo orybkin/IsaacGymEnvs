@@ -69,18 +69,19 @@ def awr_loss(old_action_neglog_probs_batch, action_neglog_probs, advantage, is_p
     return a_loss
 
 
-def critic_loss(value_preds_batch, values, curr_e_clip, return_batch, clip_value):
+def critic_loss(value_preds_batch, full_values, curr_e_clip, return_batch, clip_value):
+    value_preds_batch = value_preds_batch.expand_as(full_values)
     if clip_value:
         value_pred_clipped = value_preds_batch + \
-                (values - value_preds_batch).clamp(-curr_e_clip, curr_e_clip)
-        value_losses = (values - return_batch)**2
+            (full_values - value_preds_batch).clamp(-curr_e_clip, curr_e_clip)
+        value_losses = (full_values - return_batch)**2
         value_losses_clipped = (value_pred_clipped - return_batch)**2
-        c_loss = torch.max(value_losses, value_losses_clipped)
-        clipped_frac = (value_losses < value_losses_clipped).sum() / np.prod(value_losses.shape)
+        c_losses = torch.max(value_losses, value_losses_clipped)
+        clipped_fracs = (value_losses < value_losses_clipped).sum(dim=0) / value_losses.shape[0]
     else:
-        c_loss = (return_batch - values)**2
-        clipped_frac = torch.Tensor([0])
-    return c_loss, clipped_frac
+        c_losses = (return_batch - full_values)**2
+        clipped_fracs = torch.zeros(full_values.shape[1])
+    return c_losses, clipped_fracs
 
 
 class A2CBase(BaseAlgorithm):
@@ -145,6 +146,7 @@ class A2CBase(BaseAlgorithm):
         self.env_config = config.get('env_config', {})
         self.num_actors = config['num_actors']
         self.env_name = config['env_name']
+        self.algo_name = algo = self.config.get('algo', 'ppo')
 
         self.vec_env = None
         self.env_info = config.get('env_info')
@@ -270,6 +272,7 @@ class A2CBase(BaseAlgorithm):
         elif self.use_curriculum:
             raise ValueError
  
+        self.critic_loss_mode = config['critic_loss_mode']
         self.critic_coef = config['critic_coef']
         self.grad_norm = config['grad_norm']
         self.gamma = self.config['gamma']
@@ -340,7 +343,6 @@ class A2CBase(BaseAlgorithm):
         self.use_smooth_clamp = self.config.get('use_smooth_clamp', False)
 
         assert not self.use_smooth_clamp
-        algo = self.config.get('algo', 'ppo')
         if algo == 'ppo':
             self.actor_loss_func = common_losses.actor_loss
         elif algo == 'awr':

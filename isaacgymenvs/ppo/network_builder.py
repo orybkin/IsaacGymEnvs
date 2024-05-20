@@ -199,9 +199,7 @@ class A2CBuilder(NetworkBuilder):
             self.actor_cnn = nn.Sequential()
             self.critic_cnn = nn.Sequential()
             self.actor_mlp = nn.Sequential()
-            self.critic_mlp = nn.Sequential()
-            if self.two_critics:
-                self.critic2_mlp = nn.Sequential()
+            if self.num_critics > 1:
                 assert not self.central_value
             
             if self.has_cnn:
@@ -217,7 +215,7 @@ class A2CBuilder(NetworkBuilder):
                 self.actor_cnn = self._build_conv(**cnn_args)
 
                 if self.separate:
-                    self.critic_cnn = self._build_conv( **cnn_args)
+                    self.critic_cnn = self._build_conv(**cnn_args)
 
             mlp_input_shape = self._calc_input_size(input_shape, self.actor_cnn)
 
@@ -258,14 +256,19 @@ class A2CBuilder(NetworkBuilder):
                 'norm_only_first_layer' : self.norm_only_first_layer
             }
             self.actor_mlp = self._build_mlp(**mlp_args)
-            if self.separate:
-                self.critic_mlp = self._build_mlp(**mlp_args)
-                if self.two_critics:
-                    self.critic2_mlp = self._build_mlp(**mlp_args)
+            if self.shared_encoder:
+                if self.separate:
+                    self.critic_mlp = self._build_mlp(**mlp_args)
+                else:
+                    self.critic_mlp = self.actor_mlp
+            else:
+                self.critic_mlps = nn.ModuleList([self._build_mlp(**mlp_args) for _ in range(self.num_critics)])
+                if not self.separate:
+                    self.critic_mlps[0] = self.actor_mlp
 
-            self.value = self._build_value_layer(out_size, self.value_size)
-            if self.two_critics:
-                self.value2 = self._build_value_layer(out_size, self.value_size)
+            self.values = nn.ModuleList([])
+            for i in range(self.num_critics):
+                self.values.append(self._build_value_layer(out_size, self.value_size))
             self.value_act = self.activations_factory.create(self.value_activation)
 
             if self.is_discrete:
@@ -299,134 +302,31 @@ class A2CBuilder(NetworkBuilder):
                 if isinstance(m, nn.Linear):
                     mlp_init(m.weight)
                     if getattr(m, "bias", None) is not None:
-                        torch.nn.init.zeros_(m.bias)    
-
+                        torch.nn.init.zeros_(m.bias)
+                        
             if self.is_continuous:
                 mu_init(self.mu.weight)
                 if self.fixed_sigma:
                     sigma_init(self.sigma)
                 else:
-                    sigma_init(self.sigma.weight)  
+                    sigma_init(self.sigma.weight)
 
-        def forward(self, obs_dict, value_index=0):
+        def forward(self, obs_dict):
             obs = obs_dict['obs']
             states = obs_dict.get('rnn_states', None)
             dones = obs_dict.get('dones', None)
             bptt_len = obs_dict.get('bptt_len', 0)
 
-            if self.has_cnn:
-                # for obs shape 4
-                # input expected shape (B, W, H, C)
-                # convert to (B, C, W, H)
-                if self.permute_input and len(obs.shape) == 4:
-                    obs = obs.permute((0, 3, 1, 2))
-
-            if self.separate:
-                a_out = c_out = obs
-                a_out = self.actor_cnn(a_out)
-                a_out = a_out.contiguous().view(a_out.size(0), -1)
-
-                c_out = self.critic_cnn(c_out)
-                c_out = c_out.contiguous().view(c_out.size(0), -1)                    
-
-                if self.has_rnn:
-                    seq_length = obs_dict.get('seq_length', 1)
-
-                    if not self.is_rnn_before_mlp:
-                        a_out_in = a_out
-                        c_out_in = c_out
-                        a_out = self.actor_mlp(a_out_in)
-                        c_out = self.critic_mlp(c_out_in)
-
-                        if self.rnn_concat_input:
-                            a_out = torch.cat([a_out, a_out_in], dim=1)
-                            c_out = torch.cat([c_out, c_out_in], dim=1)
-
-                    batch_size = a_out.size()[0]
-                    num_seqs = batch_size // seq_length
-                    a_out = a_out.reshape(num_seqs, seq_length, -1)
-                    c_out = c_out.reshape(num_seqs, seq_length, -1)
-
-                    a_out = a_out.transpose(0,1)
-                    c_out = c_out.transpose(0,1)
-                    if dones is not None:
-                        dones = dones.reshape(num_seqs, seq_length, -1)
-                        dones = dones.transpose(0,1)
-
-                    if len(states) == 2:
-                        a_states = states[0]
-                        c_states = states[1]
-                    else:
-                        a_states = states[:2]
-                        c_states = states[2:]                        
-                    a_out, a_states = self.a_rnn(a_out, a_states, dones, bptt_len)
-                    c_out, c_states = self.c_rnn(c_out, c_states, dones, bptt_len)
-
-                    a_out = a_out.transpose(0,1)
-                    c_out = c_out.transpose(0,1)
-                    a_out = a_out.contiguous().reshape(a_out.size()[0] * a_out.size()[1], -1)
-                    c_out = c_out.contiguous().reshape(c_out.size()[0] * c_out.size()[1], -1)
-
-                    if self.rnn_ln:
-                        a_out = self.a_layer_norm(a_out)
-                        c_out = self.c_layer_norm(c_out)
-
-                    if type(a_states) is not tuple:
-                        a_states = (a_states,)
-                        c_states = (c_states,)
-                    states = a_states + c_states
-
-                    if self.is_rnn_before_mlp:
-                        a_out = self.actor_mlp(a_out)
-                        c_out = self.critic_mlp(c_out)
-                else:
-                    a_out = self.actor_mlp(a_out)
-                    if self.two_critics and value_index == 1:
-                        c_out = self.critic2_mlp(c_out)
-                    else:
-                        c_out = self.critic_mlp(c_out)
+            obs = obs.flatten(1)
+            a_out = self.actor_mlp(obs)
+            value = []
+            if self.shared_encoder:
+                for value_fn in self.values:
+                    value.append(self.value_act(value_fn(self.critic_mlp(obs))))
             else:
-                out = obs
-                out = self.actor_cnn(out)
-                out = out = out.flatten(1)                
-
-                if self.has_rnn:
-                    seq_length = obs_dict.get('seq_length', 1)
-
-                    out_in = out
-                    if not self.is_rnn_before_mlp:
-                        out_in = out
-                        out = self.actor_mlp(out)
-                        if self.rnn_concat_input:
-                            out = torch.cat([out, out_in], dim=1)
-
-                    batch_size = out.size()[0]
-                    num_seqs = batch_size // seq_length
-                    out = out.reshape(num_seqs, seq_length, -1)
-
-                    if len(states) == 1:
-                        states = states[0]
-
-                    out = out.transpose(0, 1)
-                    if dones is not None:
-                        dones = dones.reshape(num_seqs, seq_length, -1)
-                        dones = dones.transpose(0, 1)
-                    out, states = self.rnn(out, states, dones, bptt_len)
-                    out = out.transpose(0, 1)
-                    out = out.contiguous().reshape(out.size()[0] * out.size()[1], -1)
-
-                    if self.rnn_ln:
-                        out = self.layer_norm(out)
-                    if self.is_rnn_before_mlp:
-                        out = self.actor_mlp(out)
-                    if type(states) is not tuple:
-                        states = (states,)
-                else:
-                    out = self.actor_mlp(out)
-                c_out = a_out = out
-            value = self.value_act(self.value(c_out))
-            if self.two_critics and value_index == 1:
-                value = self.value_act(self.value2(c_out))
+                for critic_mlp, value_fn in zip(self.critic_mlps, self.values):
+                    value.append(self.value_act(value_fn(critic_mlp(obs))))
+            value = torch.cat(value, dim=1)
 
             if self.central_value:
                 return value, states
@@ -477,6 +377,7 @@ class A2CBuilder(NetworkBuilder):
 
         def load(self, params):
             self.separate = params.get('separate', False)
+            self.shared_encoder = params.get('shared_encoder', False)
             self.units = params['mlp']['units']
             self.activation = params['mlp']['activation']
             self.initializer = params['mlp']['initializer']
@@ -486,7 +387,8 @@ class A2CBuilder(NetworkBuilder):
             self.normalization = params.get('normalization', None)
             self.has_rnn = 'rnn' in params
             self.has_space = 'space' in params
-            self.two_critics = params.get('two_critics', False)
+            self.num_critics = params.get('num_critics', 1)
+            self.critic_ensemble_mode = params.get('critic_ensemble_mode', 'min')
             self.central_value = params.get('central_value', False)
             self.joint_obs_actions_config = params.get('joint_obs_actions', None)
 
@@ -974,4 +876,3 @@ class SACBuilder(NetworkBuilder):
             else:
                 self.is_discrete = False
                 self.is_continuous = False
-

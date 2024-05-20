@@ -37,7 +37,7 @@ from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.learning.curriculum import GoalSampler, GOIDGoalSampler, VDSGoalSampler
+from isaacgymenvs.learning.curriculum import GoalSampler
 
 
 @torch.jit.script
@@ -1031,9 +1031,9 @@ class FrankaPushing(VecTask):
         # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
-            if isinstance(self.goal_sampler, (GOIDGoalSampler, VDSGoalSampler)) and not self.test:
+            if self.goal_sampler.name in ('goid', 'vds') and not self.test:
                 obses = self.experience_buffer.tensor_dict['obses'][0]
-                if isinstance(self.goal_sampler, GOIDGoalSampler):
+                if self.goal_sampler.name == 'goid':
                     self.reset_counter += 1
                     successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
                     if self.goal_sampler.collect_data:
@@ -1055,8 +1055,10 @@ class FrankaPushing(VecTask):
 
                 if self.goal_sampler.has_viz and self.reset_counter % self.goal_sampler.viz_every == 0:
                     obs = self._goal_grid(obses, grid_resolution=16)
-                    fig = self.goal_sampler.viz(obs)
-                    update_dict = {self.goal_sampler.name + "_viz": fig}
+                    if self.goal_sampler.name == 'goid':
+                        update_dict = {'goid_viz': self.goal_sampler.viz(obs)}
+                    elif self.goal_sampler.name == 'vds':
+                        update_dict = {k + '_viz': v for k, v in self.goal_sampler.viz(obs).items()}
                     if "curriculum" in self.extras:
                         self.extras["curriculum"].update(update_dict)
                     else:
