@@ -564,7 +564,8 @@ class AWRAgent():
                         extrinsic_rewards = torch.clone(rewards)
                         self.rnd_network.update_rms_obs(self.obs['obs'])
                         intrinsic_rewards = self.rnd_network.update_rms_loss(self.obs['obs']).unsqueeze(1)
-                        rewards += self.config['rnd']['coef'] * intrinsic_rewards
+                        if epoch_num > self.config['rnd']['calibrate_epochs']:
+                            rewards += self.config['rnd']['coef'] * intrinsic_rewards
 
                     if self.config['value_bootstrap'] and 'time_outs' in infos:
                         shaped_rewards += self.config['gamma'] * res_dict['values'] * self.cast_obs(infos['time_outs']).unsqueeze(1).float()
