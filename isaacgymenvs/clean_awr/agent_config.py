@@ -70,7 +70,7 @@ ig_push_config = ml_collections.ConfigDict({
         'coef': 0.1,
         'warmup_steps': 50,
         'warmup_epochs': 20,
-        'calibrate_epochs': 10,
+        'calibrate_epochs': 0,
         'units': (256, 128, 64),
         'lr': 30e-5,
         'batch_size': 1024,
