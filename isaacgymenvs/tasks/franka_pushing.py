@@ -37,7 +37,6 @@ from isaacgym import gymapi
 
 from isaacgymenvs.utils.torch_jit_utils import quat_mul, to_torch, tensor_clamp  
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.learning.curriculum import GoalSampler
 
 
 @torch.jit.script
@@ -610,7 +609,7 @@ class FrankaPushing(VecTask):
         return self.obs_dict
     
     def reset_idx(self, env_ids=None):
-        if not self.test and isinstance(self.goal_sampler, GoalSampler):
+        if not self.test and self.goal_sampler is not None:
             res_dict = self.goal_sampler.sample()
             for j in range(self.n_cubes_test):
                 self._init_cube_states[j][env_ids, :3] = res_dict['states'][f'cube{j}_pos'][env_ids]
@@ -1031,7 +1030,7 @@ class FrankaPushing(VecTask):
         # Reset if needed
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
-            if self.goal_sampler.name in ('goid', 'vds') and not self.test:
+            if self.goal_sampler is not None and self.goal_sampler.name in ('goid', 'vds') and not self.test:
                 obses = self.experience_buffer.tensor_dict['obses'][0]
                 if self.goal_sampler.name == 'goid':
                     self.reset_counter += 1
