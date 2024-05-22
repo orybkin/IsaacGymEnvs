@@ -262,7 +262,7 @@ class A2CBase(BaseAlgorithm):
         self.use_curriculum = self.curriculum_cfg.get('enable', False)
         if self.use_curriculum == 'vds':
             self.vec_env.env.goal_sampler = VDSGoalSampler(
-                self.vec_env.env, self.curriculum_cfg['vds'], self.run_model, self.algo_name)
+                self.vec_env.env, self.curriculum_cfg['vds'], self.run_model, self.algo_name, self.ppo_device)
         elif self.use_curriculum == 'goid':
             self.vec_env.env.goal_sampler = GOIDGoalSampler(self.vec_env.env, self.obs_shape, self.curriculum_cfg['goid'], self.device).to(self.device)
         elif self.use_curriculum == 'uniform':

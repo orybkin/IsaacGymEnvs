@@ -1032,8 +1032,8 @@ class FrankaPushing(VecTask):
         if len(env_ids) > 0:
             if self.goal_sampler is not None and self.goal_sampler.name in ('goid', 'vds') and not self.test:
                 obses = self.experience_buffer.tensor_dict['obses'][0]
+                self.reset_counter += 1
                 if self.goal_sampler.name == 'goid':
-                    self.reset_counter += 1
                     successes = metrics[self.goal_sampler.success_metric].unsqueeze(1).float()
                     if self.goal_sampler.collect_data:
                         save_dir = 'data/goid'
