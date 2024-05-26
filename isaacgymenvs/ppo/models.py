@@ -262,12 +262,11 @@ class ModelA2CContinuousLogStd(BaseModel):
         def get_default_rnn_state(self):
             return self.a2c_network.get_default_rnn_state()
 
-        def forward(self, input_dict, value_index=0):
+        def forward(self, input_dict, value_index):
             is_train = input_dict.get('is_train', True)
             prev_actions = input_dict.get('prev_actions', None)
             input_dict['obs'] = self.norm_obs(input_dict['obs'])
-            mu, logstd, full_value, states = self.a2c_network(input_dict)
-            value = self.reduce(full_value, self.a2c_network.critic_ensemble_mode)
+            mu, logstd, value, states = self.a2c_network(input_dict, value_index)
             sigma = torch.exp(logstd)
             distr = torch.distributions.Normal(mu, sigma, validate_args=False)
             if is_train:
@@ -275,7 +274,6 @@ class ModelA2CContinuousLogStd(BaseModel):
                 prev_neglogp = self.neglogp(prev_actions, mu, sigma, logstd)
                 result = {
                     'prev_neglogp' : torch.squeeze(prev_neglogp),
-                    'full_values': full_value,
                     'values' : value,
                     'entropy' : entropy,
                     'rnn_states' : states,
@@ -288,7 +286,6 @@ class ModelA2CContinuousLogStd(BaseModel):
                 neglogp = self.neglogp(selected_action, mu, sigma, logstd)
                 result = {
                     'neglogpacs' : torch.squeeze(neglogp),
-                    'full_values': self.denorm_value(full_value),  # TODO: potentially fix this
                     'values' : self.denorm_value(value),
                     'actions' : selected_action,
                     'rnn_states' : states,

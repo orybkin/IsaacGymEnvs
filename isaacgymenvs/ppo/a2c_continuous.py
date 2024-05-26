@@ -1,3 +1,4 @@
+import re
 from isaacgymenvs.ppo import a2c_common
 from isaacgymenvs.ppo import torch_ext
 from rl_games.algos_torch import central_value
@@ -28,7 +29,18 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         self.init_rnn_from_model(self.model)
         self.last_lr = float(self.last_lr)
         self.bound_loss_type = self.config.get('bound_loss_type', 'bound') # 'regularisation' or 'bound'
-        self.optimizer = optim.Adam(self.model.parameters(), float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
+        optim_kwargs = dict(lr=float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
+        self.optimizer = optim.Adam(self.model.parameters(), **optim_kwargs)
+        if self.model.a2c_network.shared_encoder or self.model.a2c_network.num_critics == 1:
+            self.base_params = list(self.model.parameters())
+        else:
+            extra_param_subnames, self.extra_critic_params = [], []
+            for i, (critic_mlp, value_fn) in enumerate(zip(self.model.a2c_network.extra_critic_mlps, self.model.a2c_network.values[1:]), 1):
+                params = list(critic_mlp.parameters()) + list(value_fn.parameters())
+                self.extra_critic_params.append(params)
+                extra_param_subnames.extend([f'extra_critic_mlps.{i - 1}', f'values.{i}'])
+            extra_param_subnames = '|'.join(extra_param_subnames).replace('.', r'\.')
+            self.base_params = [param for name, param in self.model.named_parameters() if not re.search(extra_param_subnames, name)]
 
         if self.has_central_value:
             cv_config = {
@@ -74,8 +86,27 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
 
     def get_masked_action_values(self, obs, action_masks):
         assert False
+        
+    class StatsBuffer:
+        def __init__(self, size):
+            self.size = size
+            self.buffer = {}
+            
+        def get(self, k, i=None):
+            return self.buffer[k] if i is None else self.buffer[k][i]
+            
+        def update(self, k, v, i):
+            if k not in self.buffer:
+                self.buffer[k] = [None for _ in range(self.size)]
+            self.buffer[k][i] = v
+            
+        def tensorfy(self):
+            for k in self.buffer:
+                self.buffer[k] = torch.stack(self.buffer[k])
 
     def train_actor_critic(self, input_dict, relabeled_dict=None):
+        assert len(list(self.base_params)) > 0, breakpoint()
+
         value_preds_batch = input_dict['old_values']
         old_action_log_probs_batch = input_dict['old_logp_actions']
         advantage = input_dict['advantages']
@@ -102,53 +133,75 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             batch_dict['seq_length'] = self.seq_length
 
             if self.zero_rnn_on_done:
-                batch_dict['dones'] = input_dict['dones']            
+                batch_dict['dones'] = input_dict['dones']
+                
+        stats = A2CAgent.StatsBuffer(self.model.a2c_network.num_critics)
 
-        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
-            res_dict = self.model(batch_dict)
-            action_log_probs = res_dict['prev_neglogp']
-            full_values = res_dict['full_values']
-            values = res_dict['values']
-            entropy = res_dict['entropy']
-            mu = res_dict['mus']
-            sigma = res_dict['sigmas']
-
-            a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
-
-            if self.has_value_loss:
-                c_losses, clip_value_fracs = a2c_common.critic_loss(value_preds_batch, full_values, curr_e_clip, return_batch, self.clip_value)
-            else:
-                c_losses = torch.zeros(full_values.shape[1], device=self.ppo_device)
+        def do_update(value_index):
+            for param in self.model.parameters():
+                param.requires_grad = False
+            for param in (self.base_params if value_index == 0 else self.extra_critic_params[value_index - 1]):
+                param.requires_grad = True
+            # print(value_index, [name for name, param in self.model.named_parameters() if param.requires_grad])
+            # breakpoint()
             
-            ci_losses = c_losses.mean(dim=0)
-            if self.critic_loss_mode == 'mean':
-                c_loss = ci_losses.mean()
-            elif self.critic_loss_mode == 'sum':
-                c_loss = ci_losses.sum()
-            else:
-                raise ValueError
-            
-            if self.bound_loss_type == 'regularisation':
-                b_loss = self.reg_loss(mu)
-            elif self.bound_loss_type == 'bound':
-                b_loss = self.bound_loss(mu)
-            else:
-                b_loss = torch.zeros(1, device=self.ppo_device)
-            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
-            a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
+            with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+                res_dict = self.model(batch_dict, value_index)                
+                action_log_probs = res_dict['prev_neglogp']
+                values = res_dict['values']
+                entropy = res_dict['entropy']
+                mu = res_dict['mus']
+                sigma = res_dict['sigmas']
 
-            loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
-            
+                a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
+                if self.has_value_loss:
+                    c_loss, clip_value_frac = a2c_common.critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+                else:
+                    c_loss = torch.zeros(1, device=self.ppo_device)
+                if self.bound_loss_type == 'regularisation':
+                    b_loss = self.reg_loss(mu)
+                elif self.bound_loss_type == 'bound':
+                    b_loss = self.bound_loss(mu)
+                else:
+                    b_loss = torch.zeros(1, device=self.ppo_device)
+                losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss, entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
+                a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
+                loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+                
+                stats.update('action_log_probs', action_log_probs, value_index)
+                stats.update('mu', mu, value_index)
+                stats.update('sigma', sigma, value_index)
+                stats.update('entropy', entropy, value_index)
+                stats.update('a_loss', a_loss, value_index)
+                stats.update('b_loss', b_loss, value_index)
+                stats.update('c_loss', c_loss, value_index)
+                stats.update('clip_value_frac', clip_value_frac, value_index)
+                
             if self.multi_gpu:
                 self.optimizer.zero_grad()
             else:
                 for param in self.model.parameters():
                     param.grad = None
-
-        self.scaler.scale(loss).backward()
-        #TODO: Refactor this ugliest code of the year
-        self.truncate_gradients_and_step()
-
+            self.scaler.scale(loss).backward()
+            
+            #TODO: Refactor this ugliest code of the year
+            self.truncate_gradients_and_step()
+            
+        if not self.model.a2c_network.shared_encoder:
+            for i in range(1, self.model.a2c_network.num_critics):
+                do_update(i)
+        do_update(0)
+        
+        stats.tensorfy()
+        mu = stats.get('mu', 0)
+        sigma = stats.get('sigma', 0)
+        action_log_probs = stats.get('action_log_probs', 0)
+        a_losses = stats.get('a_loss')
+        b_losses = stats.get('b_loss')
+        c_losses = stats.get('c_loss')
+        entropies = stats.get('entropy')
+        clip_value_fracs = stats.get('clip_value_frac')
+        
         with torch.no_grad():
             reduce_kl = rnn_masks is None
             kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, reduce_kl)
@@ -160,15 +213,22 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             'clipped_fraction': torch_ext.policy_clip_fraction(action_log_probs, old_action_log_probs_batch, self.e_clip, rnn_masks).detach(),
             'clipped_value_fraction': clip_value_fracs.mean().detach()
         }
-        for i, clip_value_frac in enumerate(clip_value_fracs):
+        for i, clip_value_frac in enumerate(clip_value_fracs, 1):
             diagnostics_batch[f'clipped_value_fraction_{i}'] = clip_value_frac.detach()
         self.diagnostics.mini_batch(self, diagnostics_batch)
 
-        losses_dict = {'a_loss': a_loss, 'c_loss': c_loss, 'entropy': entropy}
-        for i, ci_loss in enumerate(ci_losses, 1):
-            losses_dict[f'c{i}_loss'] = ci_loss
-        if self.bounds_loss_coef is not None:
-            losses_dict['bounds_loss'] = b_loss
+        losses_dict = {'a_loss': a_losses.mean(), 'c_loss': c_losses.mean(), 'bounds_loss': b_losses.mean(), 'entropy': entropies.mean()}
+        if self.model.a2c_network.num_critics > 1:
+            for i, a_loss in enumerate(a_losses, 1):
+                losses_dict[f'a{i}_loss'] = a_loss
+            for i, c_loss in enumerate(c_losses, 1):
+                losses_dict[f'c{i}_loss'] = c_loss
+            if self.bounds_loss_coef is not None:
+                for i, b_loss in enumerate(b_losses, 1):
+                    losses_dict[f'bounds{i}_loss'] = b_loss
+            if self.entropy_coef is not None:
+                for i, entropy in enumerate(entropies, 1):
+                    losses_dict[f'entropy{i}'] = entropy
         return losses_dict, kl_dist, self.last_lr, lr_mul, mu.detach(), sigma.detach()
 
     def reg_loss(self, mu):

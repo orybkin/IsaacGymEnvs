@@ -256,19 +256,12 @@ class A2CBuilder(NetworkBuilder):
                 'norm_only_first_layer' : self.norm_only_first_layer
             }
             self.actor_mlp = self._build_mlp(**mlp_args)
-            if self.shared_encoder:
-                if self.separate:
-                    self.critic_mlp = self._build_mlp(**mlp_args)
-                else:
-                    self.critic_mlp = self.actor_mlp
-            else:
-                self.critic_mlps = nn.ModuleList([self._build_mlp(**mlp_args) for _ in range(self.num_critics)])
-                if not self.separate:
-                    self.critic_mlps[0] = self.actor_mlp
+            if self.separate:
+                self.critic_mlp = self._build_mlp(**mlp_args)
+            if not self.shared_encoder and self.num_critics > 1:
+                self.extra_critic_mlps = nn.ModuleList([self._build_mlp(**mlp_args) for _ in range(self.num_critics - 1)])
 
-            self.values = nn.ModuleList([])
-            for i in range(self.num_critics):
-                self.values.append(self._build_value_layer(out_size, self.value_size))
+            self.values = nn.ModuleList([self._build_value_layer(out_size, self.value_size) for _ in range(self.num_critics)])
             self.value_act = self.activations_factory.create(self.value_activation)
 
             if self.is_discrete:
@@ -311,26 +304,30 @@ class A2CBuilder(NetworkBuilder):
                 else:
                     sigma_init(self.sigma.weight)
 
-        def forward(self, obs_dict):
+        def forward(self, obs_dict, value_index):
+            """If value_index == 'all', takes the mean over critics. Otherwise should be a number in [0, n_critics)."""
+            def _get_value(obs, value_index):
+                value_fn = self.values[value_index]
+                if value_index == 0 or self.shared_encoder:
+                    out = self.critic_mlp(obs) if self.separate else a_out
+                else:
+                    critic_mlp = self.extra_critic_mlps[value_index - 1]
+                    out = critic_mlp(obs)
+                return self.value_act(value_fn(out))
+            
             obs = obs_dict['obs']
             states = obs_dict.get('rnn_states', None)
-            dones = obs_dict.get('dones', None)
-            bptt_len = obs_dict.get('bptt_len', 0)
 
             obs = obs.flatten(1)
             a_out = self.actor_mlp(obs)
-            value = []
-            if self.shared_encoder:
-                for value_fn in self.values:
-                    value.append(self.value_act(value_fn(self.critic_mlp(obs))))
+            if value_index == 'all':
+                values = torch.cat([_get_value(obs, i) for i in range(self.num_critics)], dim=1)
+                value = values.mean(dim=1, keepdim=True)
             else:
-                for critic_mlp, value_fn in zip(self.critic_mlps, self.values):
-                    value.append(self.value_act(value_fn(critic_mlp(obs))))
-            value = torch.cat(value, dim=1)
+                value = _get_value(obs, value_index)
 
             if self.central_value:
                 return value, states
-
             if self.is_discrete:
                 logits = self.logits(a_out)
                 return logits, value, states
