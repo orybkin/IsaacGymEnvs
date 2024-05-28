@@ -319,6 +319,7 @@ class AWRAgent():
         diagnostics = {}
         for i, input_dict in enumerate([original_dict, relabeled_dict]):
             if not self.config['relabel'] and i == 1: continue
+            identifier = '' if i == 0 else '_relabeled'
 
             value_preds_batch = input_dict['old_values']
             old_action_log_probs_batch = input_dict['old_logp_actions']
@@ -344,8 +345,10 @@ class AWRAgent():
             a_loss = action_log_probs * torch.clamp((advantage / self.config['temperature']).exp(), max=20)
 
             # Value function loss.
-            norm = return_batch.std()
-            norm = torch.ones_like(norm)
+            if self.config['norm_by_return']:
+                norm = self.return_std[identifier]
+            else:
+                norm = 1
             if self.config['clip_value']:
                 value_pred_clipped = value_preds_batch + \
                         (values - value_preds_batch).clamp(-self.config['e_clip'], self.config['e_clip'])
@@ -408,6 +411,7 @@ class AWRAgent():
             returns = self.value_mean_std(returns)
             if update_mov_avg:
                 self.value_mean_std.eval()
+        self.return_std[identifier] = returns.std()
 
         advantages = torch.sum(advantages, axis=1)
         if self.config['normalize_advantage']:
@@ -582,6 +586,7 @@ class AWRAgent():
             else:
                 fixed_advantage_normalizer = None
 
+            self.return_std = dict()
             self.prepare_dataset(batch_dict, self.dataset, fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='')
 
             kl_dataset = self.dataset

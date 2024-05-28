@@ -33,6 +33,7 @@ fetch_push_config = ml_collections.ConfigDict({
     'truncate_grads': 0,
     'grad_norm': 5,
     'action_bound': 1.1, 
+    'norm_by_return': 0,
 })
 
 ig_push_config = ml_collections.ConfigDict({
@@ -67,4 +68,5 @@ ig_push_config = ml_collections.ConfigDict({
     'truncate_grads': 0,
     'grad_norm': 5,
     'action_bound': 1.1,
+    'norm_by_return': 0,
 })
