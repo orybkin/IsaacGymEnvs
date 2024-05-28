@@ -28,7 +28,7 @@ ig_push_config = ml_collections.ConfigDict({
         "frankaDofNoise": 0.25,
         "distRewardScale": 1,
         "distRewardDropoff": 30,
-        "distRewardThreshold": 0.0,
+        "distRewardThreshold": 0.02,
         "aggregateMode": 3,
         "actionScale": 0.5,
         "mode": "",

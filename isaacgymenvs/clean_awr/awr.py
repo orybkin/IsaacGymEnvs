@@ -681,7 +681,7 @@ def main(_):
 
     def create_isaacgym_env(**kwargs):
         envs = isaacgymenvs.make(
-            6080, # seed 
+            -1, # seed 
             FLAGS.env['name'], 
             FLAGS.agent['num_envs'], 
             FLAGS.agent['device'],
