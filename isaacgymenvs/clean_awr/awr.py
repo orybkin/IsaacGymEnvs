@@ -295,7 +295,7 @@ class AWRAgent():
     
     def bound_loss(self, mu):
         if self.config['bounds_loss_coef'] is not None:
-            soft_bound = 1.1
+            soft_bound = self.config['action_bound'] = 1.1
             mu_loss_high = torch.clamp_min(mu - soft_bound, 0.0)**2
             mu_loss_low = torch.clamp_max(mu + soft_bound, 0.0)**2
             b_loss = (mu_loss_low + mu_loss_high).sum(axis=-1)

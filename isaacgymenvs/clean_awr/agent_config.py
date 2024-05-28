@@ -32,6 +32,7 @@ fetch_push_config = ml_collections.ConfigDict({
     'bounds_loss_coef': 0.0001,
     'truncate_grads': 0,
     'grad_norm': 5,
+    'action_bound': 1.1, 
 })
 
 ig_push_config = ml_collections.ConfigDict({
@@ -65,4 +66,5 @@ ig_push_config = ml_collections.ConfigDict({
     'bounds_loss_coef': 0.0001,
     'truncate_grads': 0,
     'grad_norm': 5,
+    'action_bound': 1.1,
 })
