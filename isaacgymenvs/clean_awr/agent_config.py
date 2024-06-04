@@ -34,6 +34,8 @@ fetch_push_config = ml_collections.ConfigDict({
     'grad_norm': 5,
     'action_bound': 1.1, 
     'norm_by_return': 0,
+    'two_critics': 0,
+    'original_baseline': 0,
 })
 
 ig_push_config = ml_collections.ConfigDict({
@@ -48,7 +50,7 @@ ig_push_config = ml_collections.ConfigDict({
     'mini_epochs': 5,
     'gamma': 0.99,
     'tau': 0.95,
-    'lr': 0.0005,
+    'lr': 0.001,
     'entropy_coef': 0.01,
     'normalize_value': 1,
     'normalize_input': 1,
@@ -69,4 +71,6 @@ ig_push_config = ml_collections.ConfigDict({
     'grad_norm': 5,
     'action_bound': 1.1,
     'norm_by_return': 0,
+    'two_critics': 0,
+    'original_baseline': 0,
 })

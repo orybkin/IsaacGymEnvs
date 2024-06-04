@@ -123,12 +123,11 @@ class AWRAgent():
             units = (256, 128, 64),
             fixed_sigma = True,
             normalize_value = self.config['normalize_value'],
-            normalize_input = self.config['normalize_input']
+            normalize_input = self.config['normalize_input'],
+            two_critics = self.config['two_critics'],
         )
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
-        if self.config['normalize_value']:
-            self.value_mean_std = self.model.value_mean_std
         self.dataset = AWRDataset(self.batch_size, self.minibatch_size, self.device)
 
         if self.config['relabel']:
@@ -160,7 +159,7 @@ class AWRAgent():
     def set_train(self):
         self.model.train()
 
-    def run_model(self, obs):
+    def run_model(self, obs, critic_index=0):
         processed_obs = obs['obs']
         self.model.eval()
         input_dict = {
@@ -169,18 +168,18 @@ class AWRAgent():
             'obs' : processed_obs,
         }
         with torch.no_grad():
-            res_dict = self.model(input_dict)
+            res_dict = self.model(input_dict, critic_index)
         return res_dict
     
-    def get_values(self, obs):
-        return self.run_model(obs)['values']
+    def get_values(self, obs, critic_index=0):
+        return self.run_model(obs, critic_index)['values']
     
     def run_model_in_slices(self, obs, actions, out_list, n_slices=None):
         # Conserves memory
         if n_slices is None: n_slices = min(16, obs.shape[0])
 
         obs = obs.reshape([n_slices, -1] + list(obs.shape[1:]))
-        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
+        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1)), 1) for i in range(n_slices)]
         res_dict = {}
         for k in res_dicts[0]:
             if k in out_list:
@@ -223,7 +222,7 @@ class AWRAgent():
         achieved = torch.cat([achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
 
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
-        res_dict = self.run_model_in_slices(obs, relabeled_buffer.tensor_dict['actions'], relabeled_buffer.tensor_dict.keys())
+        res_dict = self.run_model_in_slices(obs, relabeled_buffer.tensor_dict['actions'], list(relabeled_buffer.tensor_dict.keys()) + ['values0', 'values1'])
         relabeled_buffer.tensor_dict.update(res_dict)
 
         # Rewards
@@ -236,15 +235,19 @@ class AWRAgent():
         relabeled_buffer.tensor_dict['rewards'] = rewards
 
         # Compute returns
-        last_values = self.get_values(last_obs)
+        last_values = self.get_values(last_obs, 1)
         fdones = self.dones.float()
         mb_fdones = relabeled_buffer.tensor_dict['dones'].float()
         mb_values = relabeled_buffer.tensor_dict['values']
+        mb_values_original = relabeled_buffer.tensor_dict['values0']
         mb_rewards = relabeled_buffer.tensor_dict['rewards']
         mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
         mb_returns = mb_advs + mb_values
+        if self.config['original_baseline']:
+            mb_advs = mb_returns - mb_values_original
         relabeled_batch = relabeled_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
         relabeled_batch['returns'] = swap_and_flatten01(mb_returns)
+        relabeled_batch['advantages'] = swap_and_flatten01(mb_advs)
         relabeled_batch['played_frames'] = self.batch_size
 
         return relabeled_buffer, relabeled_batch
@@ -334,7 +337,8 @@ class AWRAgent():
             }
             lr_mul = 1.0
 
-            res_dict = self.model(batch_dict)
+            critic_index = {'': 0, '_relabeled': 1}[identifier]
+            res_dict = self.model(batch_dict, critic_index)
             action_log_probs = res_dict['prev_neglogp']
             values = res_dict['values']
             entropy = res_dict['entropy']
@@ -373,7 +377,6 @@ class AWRAgent():
             with torch.no_grad():
                 kl_dist = torch_ext.policy_kl(mu.detach(), sigma.detach(), old_mu_batch, old_sigma_batch, True)
 
-            identifier = '' if i == 0 else '_relabeled'
             losses_dict.update({f'a_loss{identifier}': a_loss, f'c_loss{identifier}': c_loss, f'entropy{identifier}': entropy})
             if self.config['bounds_loss_coef'] is not None:
                 losses_dict[f'bounds_loss{identifier}'] = b_loss
@@ -400,17 +403,18 @@ class AWRAgent():
     def prepare_dataset(self, batch_dict, dataset, update_mov_avg=True, fixed_advantage_normalizer=None, identifier=''):
         returns = batch_dict['returns']
         values = batch_dict['values']
-        advantages = returns - values
+        advantages = batch_dict['advantages']
         self.diagnostics.add(f'diagnostics/return_mean{identifier}', returns.mean())
         self.diagnostics.add(f'diagnostics/value_mean{identifier}', values.mean())
 
         if self.config['normalize_value']:
             if update_mov_avg:
-                self.value_mean_std.train()
-            values = self.value_mean_std(values)
-            returns = self.value_mean_std(returns)
+                self.model.value_mean_std.train()
+            critic_index = {'': 0, '_relabeled': 1}[identifier]
+            values = self.model.norm_value(values, critic_index)
+            returns = self.model.norm_value(returns, critic_index)
             if update_mov_avg:
-                self.value_mean_std.eval()
+                self.model.value_mean_std.eval()
         self.return_std[identifier] = returns.std()
 
         advantages = torch.sum(advantages, axis=1)
@@ -427,8 +431,8 @@ class AWRAgent():
                 advantages = (advantages - self.advantage_mean_std['mean']) / (self.advantage_mean_std['std'] + 1e-8)
         
             if self.config['normalize_value']:
-                self.diagnostics.add(f'diagnostics/rms_value_mean{identifier}', self.value_mean_std.running_mean)
-                self.diagnostics.add(f'diagnostics/rms_value_std{identifier}', math.sqrt(self.value_mean_std.running_var))
+                self.diagnostics.add(f'diagnostics/rms_value_mean{identifier}', self.model.value_mean_std.running_mean)
+                self.diagnostics.add(f'diagnostics/rms_value_std{identifier}', math.sqrt(self.model.value_mean_std.running_var))
 
         dataset_dict = {}
         dataset_dict['old_values'] = values
@@ -561,6 +565,7 @@ class AWRAgent():
 
                 batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
                 batch_dict['returns'] = swap_and_flatten01(mb_returns)
+                batch_dict['advantages'] = swap_and_flatten01(mb_advs)
                 batch_dict['played_frames'] = self.batch_size
                 batch_dict['step_time'] = step_time
 
@@ -691,7 +696,7 @@ def main(_):
             FLAGS.agent['num_envs'], 
             FLAGS.agent['device'],
             FLAGS.agent['device'],
-            FLAGS.agent['graphics_device_id'],
+            int(FLAGS.agent['device'][5:]),
             True, # headless
             False, # multi_gpu
             False, # capture_video
@@ -712,7 +717,7 @@ def main(_):
 
     wandb.init(
         project='taskmaster',
-        entity='kvfransmit',
+        entity='oleh-rybkin',
         group='Default',
         sync_tensorboard=True,
         id=run_name,
@@ -727,11 +732,11 @@ if __name__ == '__main__':
     from isaacgymenvs.clean_awr import agent_config
     from isaacgymenvs.clean_awr import env_config
 
-    config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
-    config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
 
-    # config_flags.DEFINE_config_dict('agent', agent_config.ig_push_config, lock_config=False)
-    # config_flags.DEFINE_config_dict('env', env_config.ig_push_config, lock_config=False)
+    config_flags.DEFINE_config_dict('agent', agent_config.ig_push_config, lock_config=False)
+    config_flags.DEFINE_config_dict('env', env_config.ig_push_config, lock_config=False)
 
 
     app.run(main)

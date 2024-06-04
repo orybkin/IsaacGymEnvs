@@ -32,7 +32,7 @@ def _neglogp(x, mean, std, logstd):
                 + logstd.sum(dim=-1)
 
 class AWRNetwork(nn.Module):
-    def __init__(self, actions_num, input_shape, num_seqs, units, fixed_sigma, normalize_value, normalize_input):
+    def __init__(self, actions_num, input_shape, num_seqs, units, fixed_sigma, normalize_value, normalize_input, two_critics):
         nn.Module.__init__(self)
 
         self.num_seqs = num_seqs
@@ -41,15 +41,20 @@ class AWRNetwork(nn.Module):
         assert self.fixed_sigma == True
         self.normalize_value = normalize_value
         self.normalize_input = normalize_input
+        self.two_critics = two_critics
 
         self.actor_mlp = _build_sequential_mlp(input_shape[0], units)
         self.value = torch.nn.Linear(units[-1], 1)
+        if self.two_critics:
+            self.value2 = torch.nn.Linear(units[-1], 1)
         self.mu = torch.nn.Linear(units[-1], actions_num)
         self.sigma = nn.Parameter(torch.zeros(actions_num, requires_grad=True, dtype=torch.float32), requires_grad=True)
         nn.init.constant_(self.sigma, 0)
 
         if normalize_value:
-            self.value_mean_std = RunningMeanStd((1,)) #   GeneralizedMovingStats((self.value_size,)) #   
+            self.value_mean_std = RunningMeanStd((1,)) #   GeneralizedMovingStats((self.value_size,)) #    
+            if self.two_critics:
+                self.value_mean_std2 = RunningMeanStd((1,)) #   GeneralizedMovingStats((self.value_size,)) #   
         if normalize_input:
             if isinstance(input_shape, dict):
                 self.running_mean_std = RunningMeanStdObs(input_shape)
@@ -65,11 +70,20 @@ class AWRNetwork(nn.Module):
         with torch.no_grad():
             return self.running_mean_std(observation) if self.normalize_input else observation
 
-    def denorm_value(self, value):
-        with torch.no_grad():
-            return self.value_mean_std(value, denorm=True) if self.normalize_value else value
+    def norm_value(self, value, critic_index=0):
+        if critic_index == 0 or self.two_critics == False:
+            return self.value_mean_std(value) if self.normalize_value else value
+        else:
+            return self.value_mean_std2(value) if self.normalize_value else value
 
-    def forward(self, input_dict):
+    def denorm_value(self, value, critic_index=0):
+        with torch.no_grad():
+            if critic_index == 0 or self.two_critics == False:
+                return self.value_mean_std(value, denorm=True) if self.normalize_value else value
+            else:
+                return self.value_mean_std2(value, denorm=True) if self.normalize_value else value
+
+    def forward(self, input_dict, critic_index=0):
         is_train = input_dict.get('is_train', True)
         prev_actions = input_dict['prev_actions']
         obs = self.norm_obs(input_dict['obs'])
@@ -78,7 +92,12 @@ class AWRNetwork(nn.Module):
         out = out = out.flatten(1)                
         out = self.actor_mlp(out)
         c_out = a_out = out
-        value = self.value(c_out)
+        value0 = self.value(c_out)
+        value1 = self.value2(c_out)
+        if critic_index == 0 or self.two_critics == False:
+            value = value0
+        else:
+            value = value1
 
         mu = self.mu(a_out)
         logstd = mu*0 + self.sigma
@@ -95,7 +114,9 @@ class AWRNetwork(nn.Module):
                 'values' : value,
                 'entropy' : entropy,
                 'mus' : mu,
-                'sigmas' : sigma
+                'sigmas' : sigma,
+                'values0': value0,
+                'values1': value1,
             }                
             return result
         else:
@@ -103,9 +124,11 @@ class AWRNetwork(nn.Module):
             neglogp = _neglogp(selected_action, mu, sigma, logstd)
             result = {
                 'neglogpacs' : torch.squeeze(neglogp),
-                'values' : self.denorm_value(value),
+                'values' : self.denorm_value(value, critic_index),
                 'actions' : selected_action,
                 'mus' : mu,
-                'sigmas' : sigma
+                'sigmas' : sigma,
+                'values0': value0,
+                'values1': value1,
             }
             return result
