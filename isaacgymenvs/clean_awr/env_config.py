@@ -35,6 +35,7 @@ ig_push_config = ml_collections.ConfigDict({
         "distanceFromBlock": 0.0,
         "nCubes": 6,
         "startPositionNoise": 0.12,
+        "goalPositionNoise": 0.12,
         "friction": 0.5,
         "rigidCubes": False,
         "testTask": -1,
