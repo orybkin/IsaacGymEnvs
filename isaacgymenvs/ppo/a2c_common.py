@@ -145,6 +145,7 @@ class A2CBase(BaseAlgorithm):
         self.env_config = config.get('env_config', {})
         self.num_actors = config['num_actors']
         self.env_name = config['env_name']
+        self.algo_name = algo = self.config.get('algo', 'ppo')
 
         self.vec_env = None
         self.env_info = config.get('env_info')
@@ -269,7 +270,7 @@ class A2CBase(BaseAlgorithm):
             self.vec_env.env.goal_sampler = MultipleGoalSampler(self.vec_env.env)
         elif self.use_curriculum:
             raise ValueError
- 
+        
         self.critic_coef = config['critic_coef']
         self.grad_norm = config['grad_norm']
         self.gamma = self.config['gamma']
@@ -368,18 +369,18 @@ class A2CBase(BaseAlgorithm):
         # soft augmentation not yet supported
         assert not self.has_soft_aug
 
-    def truncate_gradients_and_step(self):
+    def truncate_gradients_and_step(self, optimizer, params):
         if self.multi_gpu:
             # batch allreduce ops: see https://github.com/entity-neural-network/incubator/pull/220
             all_grads_list = []
-            for param in self.model.parameters():
+            for param in params:
                 if param.grad is not None:
                     all_grads_list.append(param.grad.view(-1))
 
             all_grads = torch.cat(all_grads_list)
             dist.all_reduce(all_grads, op=dist.ReduceOp.SUM)
             offset = 0
-            for param in self.model.parameters():
+            for param in params:
                 if param.grad is not None:
                     param.grad.data.copy_(
                         all_grads[offset : offset + param.numel()].view_as(param.grad.data) / self.world_size
@@ -387,10 +388,10 @@ class A2CBase(BaseAlgorithm):
                     offset += param.numel()
 
         if self.truncate_grads:
-            self.scaler.unscale_(self.optimizer)
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+            self.scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(params, self.grad_norm)
 
-        self.scaler.step(self.optimizer)
+        self.scaler.step(optimizer)
         self.scaler.update()
 
     def load_networks(self, params):
@@ -447,7 +448,7 @@ class A2CBase(BaseAlgorithm):
         #if self.has_central_value:
         #    self.central_value_net.update_lr(lr)
 
-    def run_model(self, obs):
+    def run_model(self, obs, value_index):
         processed_obs = self._preproc_obs(obs['obs'])
         self.model.eval()
         input_dict = {
@@ -458,7 +459,7 @@ class A2CBase(BaseAlgorithm):
         }
 
         with torch.no_grad():
-            res_dict = self.model(input_dict)
+            res_dict = self.model(input_dict, value_index)
             if self.has_central_value:
                 states = obs['states']
                 input_dict = {
@@ -490,7 +491,7 @@ class A2CBase(BaseAlgorithm):
                     'obs' : processed_obs,
                     'rnn_states' : self.rnn_states
                 }
-                result = self.model(input_dict)
+                result = self.model(input_dict, value_index=0)
                 value = result['values']
             return value
 
@@ -799,7 +800,7 @@ class A2CBase(BaseAlgorithm):
                 res_dict = self.get_masked_action_values(self.obs, masks)
             else:
                 with torch.no_grad():
-                    res_dict = self.run_model(self.obs)
+                    res_dict = self.run_model(self.obs, value_index=0)
             self.experience_buffer.update_data('obses', n, self.obs['obs'])
             self.experience_buffer.update_data('dones', n, self.dones)
 
@@ -1275,7 +1276,7 @@ class ContinuousA2CBase(A2CBase):
         n_slices = min(16, obs.shape[0])
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         obs = relabeled_buffer.tensor_dict['obses'].reshape([n_slices, -1] + list(obs.shape[1:]))
-        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
+        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1)), value_index=0) for i in range(n_slices)]
         res_dict = {}
         for k in res_dicts[0]:
             if k in relabeled_buffer.tensor_dict:
@@ -1461,7 +1462,7 @@ class ContinuousA2CBase(A2CBase):
                 masks = self.vec_env.get_action_masks()
                 res_dict = self.get_masked_action_values(obs, masks)
             else:
-                res_dict = self.run_model(obs)
+                res_dict = self.run_model(obs, value_index=0)
             
             self.test_buffer.update_data('obses', n, obs['obs'][:cut])
             self.test_buffer.update_data('dones', n, dones[:cut])

@@ -200,10 +200,9 @@ class A2CBuilder(NetworkBuilder):
             self.critic_cnn = nn.Sequential()
             self.actor_mlp = nn.Sequential()
             self.critic_mlp = nn.Sequential()
-            if self.two_critics:
-                self.critic2_mlp = nn.Sequential()
+            if self.num_critics > 1:
                 assert not self.central_value
-            
+
             if self.has_cnn:
                 if self.permute_input:
                     input_shape = torch_ext.shape_whc_to_cwh(input_shape)
@@ -260,12 +259,12 @@ class A2CBuilder(NetworkBuilder):
             self.actor_mlp = self._build_mlp(**mlp_args)
             if self.separate:
                 self.critic_mlp = self._build_mlp(**mlp_args)
-                if self.two_critics:
-                    self.critic2_mlp = self._build_mlp(**mlp_args)
+            if self.use_extra_critics:
+                self.extra_critic_mlps = nn.ModuleList([self._build_mlp(**mlp_args) for _ in range(self.num_critics - 1)])
 
             self.value = self._build_value_layer(out_size, self.value_size)
-            if self.two_critics:
-                self.value2 = self._build_value_layer(out_size, self.value_size)
+            if self.use_extra_critics:
+                self.extra_values = nn.ModuleList([self._build_value_layer(out_size, self.value_size) for _ in range(self.num_critics - 1)])
             self.value_act = self.activations_factory.create(self.value_activation)
 
             if self.is_discrete:
@@ -381,10 +380,10 @@ class A2CBuilder(NetworkBuilder):
                         c_out = self.critic_mlp(c_out)
                 else:
                     a_out = self.actor_mlp(a_out)
-                    if self.two_critics and value_index == 1:
-                        c_out = self.critic2_mlp(c_out)
-                    else:
+                    if value_index == 0:
                         c_out = self.critic_mlp(c_out)
+                    else:
+                        c_out = self.extra_critic_mlps[value_index - 1](c_out)
             else:
                 out = obs
                 out = self.actor_cnn(out)
@@ -423,10 +422,15 @@ class A2CBuilder(NetworkBuilder):
                         states = (states,)
                 else:
                     out = self.actor_mlp(out)
-                c_out = a_out = out
-            value = self.value_act(self.value(c_out))
-            if self.two_critics and value_index == 1:
-                value = self.value_act(self.value2(c_out))
+                a_out = out
+                if value_index == 0:
+                    c_out = a_out
+                else:
+                    c_out = self.extra_critic_mlps[value_index - 1](c_out)
+            if value_index == 0:
+                value = self.value_act(self.value(c_out))
+            elif self.use_extra_critics:
+                value = self.value_act(self.extra_values[value_index - 1](c_out))
 
             if self.central_value:
                 return value, states
@@ -444,7 +448,7 @@ class A2CBuilder(NetworkBuilder):
                 else:
                     sigma = self.sigma_act(self.sigma(a_out))
                 return mu, mu*0 + sigma, value, states
-                    
+
         def is_separate_critic(self):
             return self.separate
 
@@ -477,6 +481,7 @@ class A2CBuilder(NetworkBuilder):
 
         def load(self, params):
             self.separate = params.get('separate', False)
+            self.shared_encoder = params.get('shared_encoder', False)
             self.units = params['mlp']['units']
             self.activation = params['mlp']['activation']
             self.initializer = params['mlp']['initializer']
@@ -486,7 +491,9 @@ class A2CBuilder(NetworkBuilder):
             self.normalization = params.get('normalization', None)
             self.has_rnn = 'rnn' in params
             self.has_space = 'space' in params
-            self.two_critics = params.get('two_critics', False)
+            self.num_critics = params.get('num_critics', 1)
+            self.use_extra_critics = self.num_critics > 1 and not self.shared_encoder
+            self.critic_ensemble_mode = params.get('critic_ensemble_mode', 'min')
             self.central_value = params.get('central_value', False)
             self.joint_obs_actions_config = params.get('joint_obs_actions', None)
 

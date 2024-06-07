@@ -4,8 +4,31 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.patches import Polygon
+from scipy.spatial.transform import Rotation
+from scipy.spatial import ConvexHull
 
 from isaacgymenvs.ppo.network_builder import NetworkBuilder
+
+def cube_projection(size, center, quat):
+    """
+    Args:
+        center: (3,) nparray
+        size: float
+        quat: (4,) nparray
+    Returns:
+        x, y coordinates of convex hull of the projection onto xy plane
+    """
+    r = Rotation.from_quat(quat).as_matrix()
+    vertices = [(x, y, z) for x in [-1, 1] for y in [-1, 1] for z in [-1, 1]]
+    vertices = np.array(vertices).reshape(8, 3).T
+    vertices = (size / 2) * r @ vertices
+    vertices = vertices + center.reshape(3, 1)
+    proj = vertices[:2].T
+    hull = ConvexHull(proj)
+    return proj[hull.vertices]
+
 
 class GoalSampler:
     def __init__(self, name, env, requires_extra_sim=1, has_viz=False):
@@ -20,6 +43,20 @@ class GoalSampler:
     def viz(self, obs):
         if self.has_viz:
             raise NotImplementedError
+        
+    def add_cubes_to_viz(self, obs, ax: Axes):
+        for j in range(self.env.n_cubes_train):
+            pos_idx = self.env.obs_buf_idx[f'cube{j}_pos']
+            quat_idx = self.env.obs_buf_idx[f'cube{j}_quat']
+            size = self.env.cube_sizes[j]
+            pos = obs[0, pos_idx[0] : pos_idx[1]].cpu().numpy()
+            quat = obs[0, quat_idx[0] : quat_idx[1]].cpu().numpy()
+            hull_vertices = cube_projection(size, pos, quat)
+            poly = Polygon(hull_vertices)
+            ax.add_patch(poly)
+            poly.set_facecolor('gray')
+            poly.set_edgecolor('black')
+            poly.set_alpha(0.3)
 
 class UniformGoalSampler(GoalSampler):
     def __init__(self, env):
@@ -38,9 +75,6 @@ class MultipleGoalSampler(GoalSampler):
         states, obs = self.env.sample_goals(self.n_samples)
         assert torch.any(obs[0] != obs[1])
         assert torch.any( states[0]['cube0_pos'] != states[1]['cube0_pos'])
-        # print('\ndebug sampling\n')
-        # for i in range(3):
-        #     print(states[i]['cube0_pos'])
         return {'states': states[0], 'obs': obs[0]}
 
 class GOIDGoalSampler(nn.Module, GoalSampler):
@@ -177,6 +211,7 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
             extent=[-self.env.goal_position_noise, self.env.goal_position_noise, -self.env.goal_position_noise, self.env.goal_position_noise]
         )
         cbar = fig.colorbar(im, ax=ax)
+        self.add_cubes_to_viz(obs, ax)
         return fig
         
         
@@ -213,14 +248,10 @@ class VDSGoalSampler(GoalSampler):
             else:
                 raise NotImplementedError
         disagreement = self.disagreement_fn(values).detach().cpu().numpy()  # (num_envs, n_candidates)
-        disagreement = disagreement ** self.temperature
+        disagreement = np.power(disagreement, self.temperature)
         sum_disagreement = np.sum(disagreement, axis=1, keepdims=True)
-        if np.allclose(sum_disagreement, 0):
-            disagreement = None
-            indices = np.zeros(num_envs)
-        else:
-            disagreement /= sum_disagreement
-            indices = np.apply_along_axis(lambda row: np.random.choice(len(row), p=row), axis=1, arr=disagreement)
+        disagreement = np.where(np.isclose(sum_disagreement, 0), 1 / self.n_candidates, disagreement / sum_disagreement)  # take uniform if unstable
+        indices = np.apply_along_axis(lambda row: np.random.choice(len(row), p=row), axis=1, arr=disagreement)
     
         sampled_states = {}
         for k in cand_states[0].keys():
@@ -251,16 +282,29 @@ class VDSGoalSampler(GoalSampler):
             if self.algo_name == 'ppo':
                 values = self.model_runner({'obs': obs})['full_values']
                 values = values.permute(1, 0)
+                mean_values = torch.mean(values, dim=0).cpu().numpy()
+                mean_values = mean_values.reshape((grid_resolution, grid_resolution))
                 disagreement = self.disagreement_fn(values).cpu().numpy()
                 disagreement = disagreement.reshape((grid_resolution, grid_resolution))
             else:
                 raise NotImplementedError
         
         plt.clf()
-        fig, ax = plt.subplots(figsize=(6, 6))
-        im = ax.imshow(
-            disagreement, cmap='Reds', interpolation='none', vmin=0,
-            extent=[-self.env.goal_position_noise, self.env.goal_position_noise, -self.env.goal_position_noise, self.env.goal_position_noise]
+        fig_values = plt.figure(figsize=(6, 6))
+        ax_values = fig_values.add_subplot(111)
+        fig_disagreement = plt.figure(figsize=(6, 6))
+        ax_disagreement = fig_disagreement.add_subplot(111)
+        kwargs = dict(
+            cmap='Reds', 
+            interpolation='none',
+            extent=[-self.env.goal_position_noise, self.env.goal_position_noise, 
+                    -self.env.goal_position_noise, self.env.goal_position_noise]
         )
-        cbar = fig.colorbar(im, ax=ax)
-        return fig
+        im_values = ax_values.imshow(mean_values, **kwargs)
+        im_disagreement = ax_disagreement.imshow(disagreement, vmin=0, **kwargs)
+        fig_values.colorbar(im_values, ax=ax_values)
+        fig_disagreement.colorbar(im_disagreement, ax=ax_disagreement)
+        self.add_cubes_to_viz(obs, ax_values)
+        self.add_cubes_to_viz(obs, ax_disagreement)
+
+        return {'value': fig_values, 'disagreement': fig_disagreement}

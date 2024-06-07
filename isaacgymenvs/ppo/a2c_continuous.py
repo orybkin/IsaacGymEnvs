@@ -28,7 +28,17 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
         self.init_rnn_from_model(self.model)
         self.last_lr = float(self.last_lr)
         self.bound_loss_type = self.config.get('bound_loss_type', 'bound') # 'regularisation' or 'bound'
-        self.optimizer = optim.Adam(self.model.parameters(), float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
+        optim_kwargs = dict(lr=float(self.last_lr), eps=1e-08, weight_decay=self.weight_decay)
+        self.optimizer = optim.Adam(self.model.parameters(), **optim_kwargs)
+        if self.model.a2c_network.use_extra_critics:
+            self.base_params = list(self.model.parameters())
+            self.extra_critic_params, self.extra_critic_optimizers = [], []
+            for critic_mlp, value_fn in zip(self.model.a2c_network.extra_critic_mlps, self.model.a2c_network.extra_values):
+                extra_params = list(critic_mlp.parameters()) + list(value_fn.parameters())
+                self.extra_critic_params.append(extra_params)
+                self.extra_critic_optimizers.append(optim.Adam(extra_params, **optim_kwargs))
+                self.base_params = [bp for bp in self.base_params if all(bp is not ep for ep in extra_params)]
+            self.base_optimizer = optim.Adam(self.base_params, **optim_kwargs)
 
         if self.has_central_value:
             cv_config = {
@@ -74,6 +84,24 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
 
     def get_masked_action_values(self, obs, action_masks):
         assert False
+        
+    class StatsBuffer:
+        def __init__(self, size):
+            self.size = size
+            self.buffer = {}
+
+        def get(self, k, i=None):
+            if i is None:
+                assert all(self.buffer[k][i] is not None for i in range(self.size))
+                return torch.stack(self.buffer[k])
+            else:
+                assert self.buffer[k][i] is not None
+                return self.buffer[k][i]
+
+        def update(self, k, v, i):
+            if k not in self.buffer:
+                self.buffer[k] = [None for _ in range(self.size)]
+            self.buffer[k][i] = v
 
     def train_actor_critic(self, input_dict, relabeled_dict=None):
         value_preds_batch = input_dict['old_values']
@@ -102,42 +130,77 @@ class A2CAgent(a2c_common.ContinuousA2CBase):
             batch_dict['seq_length'] = self.seq_length
 
             if self.zero_rnn_on_done:
-                batch_dict['dones'] = input_dict['dones']            
+                batch_dict['dones'] = input_dict['dones']
 
-        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
-            res_dict = self.model(batch_dict)
-            action_log_probs = res_dict['prev_neglogp']
-            values = res_dict['values']
-            entropy = res_dict['entropy']
-            mu = res_dict['mus']
-            sigma = res_dict['sigmas']
+        # stats = A2CAgent.StatsBuffer(1)
+        stats = A2CAgent.StatsBuffer(self.model.a2c_network.num_critics)
 
-            a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
-
-            if self.has_value_loss:
-                c_loss, clip_value_frac = a2c_common.critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+        def do_update(value_index):
+            if self.model.a2c_network.num_critics == 1:
+                params = self.model.parameters()
+                optimizer = self.optimizer
+            elif value_index == 0:
+                params = self.base_params
+                optimizer = self.base_optimizer
             else:
-                c_loss = torch.zeros(1, device=self.ppo_device)
-            if self.bound_loss_type == 'regularisation':
-                b_loss = self.reg_loss(mu)
-            elif self.bound_loss_type == 'bound':
-                b_loss = self.bound_loss(mu)
-            else:
-                b_loss = torch.zeros(1, device=self.ppo_device)
-            losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
-            a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
+                params = self.extra_critic_params[value_index - 1]
+                optimizer = self.extra_critic_optimizers[value_index - 1]
+            with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+                res_dict = self.model(batch_dict, value_index)
+                action_log_probs = res_dict['prev_neglogp']
+                values = res_dict['values']
+                entropy = res_dict['entropy']
+                mu = res_dict['mus']
+                sigma = res_dict['sigmas']
 
-            loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+                a_loss = self.actor_loss_func(old_action_log_probs_batch, action_log_probs, advantage, self.ppo, curr_e_clip)
+
+                if self.has_value_loss:
+                    c_loss, clip_value_frac = a2c_common.critic_loss(value_preds_batch, values, curr_e_clip, return_batch, self.clip_value)
+                else:
+                    c_loss = torch.zeros(1, device=self.ppo_device)
+                if self.bound_loss_type == 'regularisation':
+                    b_loss = self.reg_loss(mu)
+                elif self.bound_loss_type == 'bound':
+                    b_loss = self.bound_loss(mu)
+                else:
+                    b_loss = torch.zeros(1, device=self.ppo_device)
+                losses, sum_mask = torch_ext.apply_masks([a_loss.unsqueeze(1), c_loss , entropy.unsqueeze(1), b_loss.unsqueeze(1)], rnn_masks)
+                a_loss, c_loss, entropy, b_loss = losses[0], losses[1], losses[2], losses[3]
+
+                loss = a_loss + 0.5 * c_loss * self.critic_coef - entropy * self.entropy_coef + b_loss * self.bounds_loss_coef
+                
+                stats.update('action_log_probs', action_log_probs, value_index)
+                stats.update('mu', mu, value_index)
+                stats.update('sigma', sigma, value_index)
+                stats.update('entropy', entropy, value_index)
+                stats.update('a_loss', a_loss, value_index)
+                stats.update('b_loss', b_loss, value_index)
+                stats.update('c_loss', c_loss, value_index)
+                stats.update('clip_value_frac', clip_value_frac, value_index)
+                
+                if self.multi_gpu:
+                    self.optimizer.zero_grad()
+                else:
+                    for param in self.model.parameters():
+                        param.grad = None
+
+            self.scaler.scale(loss).backward()
+            #TODO: Refactor this ugliest code of the year
+            self.truncate_gradients_and_step(optimizer, params)
             
-            if self.multi_gpu:
-                self.optimizer.zero_grad()
-            else:
-                for param in self.model.parameters():
-                    param.grad = None
+        # for i in range(1, self.model.a2c_network.num_critics):
+        #     do_update(i)
+        do_update(0)
 
-        self.scaler.scale(loss).backward()
-        #TODO: Refactor this ugliest code of the year
-        self.truncate_gradients_and_step()
+        mu = stats.get('mu', 0)
+        sigma = stats.get('sigma', 0)
+        action_log_probs = stats.get('action_log_probs', 0)
+        a_loss = stats.get('a_loss', 0)
+        b_loss = stats.get('b_loss', 0)
+        c_loss = stats.get('c_loss', 0)
+        entropy = stats.get('entropy', 0)
+        clip_value_frac = stats.get('clip_value_frac', 0)
 
         with torch.no_grad():
             reduce_kl = rnn_masks is None
