@@ -216,10 +216,11 @@ class GOIDGoalSampler(nn.Module, GoalSampler):
         
         
 class VDSGoalSampler(GoalSampler):
-    def __init__(self, env, cfg, model_runner, algo_name):
+    def __init__(self, env, cfg, model_runner, algo_name, device):
         super().__init__('vds', env, requires_extra_sim=10, has_viz=True)
         self.model_runner = model_runner
         self.algo_name = algo_name
+        self.device = device
         self.temperature = cfg.get('temperature', 1)
         self.n_candidates = cfg.get('n_candidates', 1)
         self.viz_every = cfg.get('visualize_every', 0)
@@ -241,7 +242,7 @@ class VDSGoalSampler(GoalSampler):
             values = []
             if self.algo_name == 'ppo':
                 for cand_obs in cand_obses:
-                    res_dict = self.model_runner({'obs': cand_obs})
+                    res_dict = self.model_runner({'obs': cand_obs.to(self.device)})
                     values.append(res_dict['full_values'])
                 values = torch.stack(values, dim=0)  # (n_candidates, num_envs, num_critics)
                 values = values.permute(2, 1, 0)
@@ -280,8 +281,8 @@ class VDSGoalSampler(GoalSampler):
         
         with torch.no_grad():
             if self.algo_name == 'ppo':
-                values = self.model_runner({'obs': obs})['full_values']
-                values = values.permute(1, 0)
+                res_dict = self.model_runner({'obs': obs.to(self.device)})
+                values = res_dict['full_values'].permute(1, 0)
                 mean_values = torch.mean(values, dim=0).cpu().numpy()
                 mean_values = mean_values.reshape((grid_resolution, grid_resolution))
                 disagreement = self.disagreement_fn(values).cpu().numpy()
