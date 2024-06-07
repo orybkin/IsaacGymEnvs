@@ -370,18 +370,18 @@ class A2CBase(BaseAlgorithm):
         # soft augmentation not yet supported
         assert not self.has_soft_aug
 
-    def truncate_gradients_and_step(self):
+    def truncate_gradients_and_step(self, optimizer, params):
         if self.multi_gpu:
             # batch allreduce ops: see https://github.com/entity-neural-network/incubator/pull/220
             all_grads_list = []
-            for param in self.model.parameters():
+            for param in params:
                 if param.grad is not None:
                     all_grads_list.append(param.grad.view(-1))
 
             all_grads = torch.cat(all_grads_list)
             dist.all_reduce(all_grads, op=dist.ReduceOp.SUM)
             offset = 0
-            for param in self.model.parameters():
+            for param in params:
                 if param.grad is not None:
                     param.grad.data.copy_(
                         all_grads[offset : offset + param.numel()].view_as(param.grad.data) / self.world_size
@@ -389,10 +389,10 @@ class A2CBase(BaseAlgorithm):
                     offset += param.numel()
 
         if self.truncate_grads:
-            self.scaler.unscale_(self.optimizer)
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_norm)
+            self.scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(params, self.grad_norm)
 
-        self.scaler.step(self.optimizer)
+        self.scaler.step(optimizer)
         self.scaler.update()
 
     def load_networks(self, params):
@@ -460,7 +460,7 @@ class A2CBase(BaseAlgorithm):
         }
 
         with torch.no_grad():
-            res_dict = self.model(input_dict)
+            res_dict = self.model(input_dict, value_index=0)
             if self.has_central_value:
                 states = obs['states']
                 input_dict = {
@@ -492,7 +492,7 @@ class A2CBase(BaseAlgorithm):
                     'obs' : processed_obs,
                     'rnn_states' : self.rnn_states
                 }
-                result = self.model(input_dict)
+                result = self.model(input_dict, value_index=0)
                 value = result['values']
             return value
 
