@@ -38,6 +38,7 @@ from .franka_cube_stack import FrankaCubeStack
 from .franka_reaching import FrankaReaching
 from .franka_reaching2 import FrankaReaching2
 from .franka_pushing import FrankaPushing
+from .franka_pushing_fetchlike import FrankaPushingFetchlike
 from .franka_pushing_cabinet import FrankaPushingCabinet
 from .humanoid import Humanoid
 from .ingenuity import Ingenuity
@@ -62,6 +63,7 @@ isaacgym_task_map = {
     "FrankaReaching": FrankaReaching,
     "FrankaReaching2": FrankaReaching2,
     "FrankaPushing": FrankaPushing,
+    "FrankaPushingFetchlike": FrankaPushingFetchlike,
     "FrankaPushingCabinet": FrankaPushingCabinet,
     "Humanoid": Humanoid,
     "Ingenuity": Ingenuity,
