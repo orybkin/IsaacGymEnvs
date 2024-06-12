@@ -706,18 +706,22 @@ def main(_):
     })
     vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
 
-    time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f") # TODO: this doesn't work with multiple seeds
-    run_name = f"{time_str}_{FLAGS.agent['experiment']}"
+    time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f")
+    if FLAGS.slurm_job_id != -1:
+        run_name = f"{FLAGS.slurm_job_id}_{FLAGS.agent['experiment']}"
+    else:
+        run_name = f"{time_str}_{FLAGS.agent['experiment']}"
     FLAGS.agent['run_name'] = run_name
 
     wandb.init(
         project='taskmaster',
-        entity='kvfransmit',
+        entity='oleh-rybkin',
         group='Default',
         sync_tensorboard=True,
         id=run_name,
         name=run_name,
         config={'agent': dict(FLAGS.agent), 'env': dict(FLAGS.env), 'experiment': FLAGS.agent['experiment']},
+        settings=wandb.Settings(start_method='fork'),
     )
 
     agent = AWRAgent(FLAGS.agent, RLGPUAlgoObserver(run_name))
@@ -733,5 +737,6 @@ if __name__ == '__main__':
     # config_flags.DEFINE_config_dict('agent', agent_config.ig_push_config, lock_config=False)
     # config_flags.DEFINE_config_dict('env', env_config.ig_push_config, lock_config=False)
 
+    flags.DEFINE_integer('slurm_job_id', -1, '')
 
     app.run(main)
