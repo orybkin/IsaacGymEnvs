@@ -54,6 +54,7 @@ class SACAgent(BaseAlgorithm):
         self.mixed_precision = config.get('mixed_precision', False)
         self.rb_precision = config.get('rb_precision', 'float32')
         self.fill_buffer_first = config.get('fill_buffer_first', False)
+        self.actor_ensemble_mode = config.get('actor_ensemble_mode', 'min')
 
         # TODO: double-check! To use bootstrap instead?
         self.max_env_steps = config.get("max_env_steps", 1000) # temporary, in future we will use other approach
@@ -115,7 +116,7 @@ class SACAgent(BaseAlgorithm):
         self.actor_optimizer = torch.optim.Adam(self.model.sac_network.actor.parameters(),
                                                 lr=float(self.config['actor_lr']),
                                                 betas=self.config.get("actor_betas", [0.9, 0.999]))
-
+        
         self.critic_optimizer = torch.optim.Adam(self.model.sac_network.critic.parameters(),
                                                  lr=float(self.config["critic_lr"]),
                                                  betas=self.config.get("critic_betas", [0.9, 0.999]))
@@ -263,7 +264,7 @@ class SACAgent(BaseAlgorithm):
         state['frame'] = self.frame
         state['actor_optimizer'] = self.actor_optimizer.state_dict()
         state['critic_optimizer'] = self.critic_optimizer.state_dict()
-        state['log_alpha_optimizer'] = self.log_alpha_optimizer.state_dict()        
+        state['log_alpha_optimizer'] = self.log_alpha_optimizer.state_dict()
 
         return state
 
@@ -340,7 +341,7 @@ class SACAgent(BaseAlgorithm):
 
         return critic_loss, info
 
-    def update_actor_and_alpha(self, obs):
+    def update_actor(self, obs):
         for p in self.model.sac_network.critic.parameters():
             p.requires_grad = False
 
@@ -350,11 +351,15 @@ class SACAgent(BaseAlgorithm):
             log_prob = dist.log_prob(action).sum(-1, keepdim=True)
             entropy = -log_prob.mean() #dist.entropy().sum(-1, keepdim=True).mean()
             action = action * self.action_scale
-            actor_Q1, actor_Q2 = self.model.critic(obs, action)
-            # actor_Q = (actor_Q1 + actor_Q2) / 2
-            actor_Q = torch.min(actor_Q1, actor_Q2)
-
-            actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
+            
+            actor_Qs = self.model.critic(obs, action)
+            if self.actor_ensemble_mode == 'min':
+                actor_Q, _ = torch.min(torch.cat(actor_Qs, dim=1), dim=1, keepdim=True)
+            elif self.actor_ensemble_mode == 'avg':
+                actor_Q = torch.mean(torch.cat(actor_Qs, dim=1), dim=1, keepdim=True)
+            else:
+                raise ValueError()
+            actor_loss = torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q
         actor_loss = actor_loss.mean()
 
         for p in self.model.sac_network.critic.parameters():
@@ -397,7 +402,7 @@ class SACAgent(BaseAlgorithm):
         actor_loss_info = {}
         if step % self.policy_update_fraction == 0:
             # Actor
-            actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
+            actor_loss, actor_loss_info = self.update_actor(obs)
             self.actor_optimizer.zero_grad(set_to_none=True)
             actor_loss.backward()
             self.actor_optimizer.step()
@@ -422,7 +427,7 @@ class SACAgent(BaseAlgorithm):
 
         with torch.no_grad():
             critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
-            actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
+            actor_loss, actor_loss_info = self.update_actor(obs)
         
         info = {'val/a_loss': actor_loss_info['losses/a_loss'],
                 'val/actor_q': actor_loss_info['info/actor_q'],
