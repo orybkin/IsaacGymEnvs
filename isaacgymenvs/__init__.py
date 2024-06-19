@@ -41,6 +41,7 @@ def make(
         if type(cfg) == dict:
             cfg_dict = cfg
         else:
+            cfg = cfg.task if 'task' in cfg and 'name' in cfg.task else cfg
             cfg_dict = omegaconf_to_dict(cfg)
 
     create_rlgpu_env = get_rlgames_env_creator(

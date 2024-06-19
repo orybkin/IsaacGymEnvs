@@ -26,6 +26,7 @@ INSTALL_REQUIRES = [
     "stable_baselines==2.0.0",
     "gymnasium_robotics[mujoco]",
     "ml_collections",
+    "cython<3"
     # "gymnasium==3.3.0",
     ]
 

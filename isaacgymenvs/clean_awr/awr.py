@@ -652,10 +652,10 @@ class AWRAgent():
                 self.mean_rewards = mean_rewards[0]
 
                 step_time = max(step_time, 1e-9)
-                fps_total = curr_frames / total_time
+                fps_total = self.frame / total_time
                 max_epochs = self.config['max_epochs']
                 ep_str = f'/{max_epochs:.0f}' if max_epochs != -1 else ''
-                print(f'rewards: {mean_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str}')
+                print(f'rewards: {mean_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str} frames:', self.frame)
 
                 for i in range(1):
                     rewards_name = 'rewards' if i == 0 else 'rewards{0}'.format(i)
@@ -730,6 +730,7 @@ def main(_):
 if __name__ == '__main__':
     from isaacgymenvs.clean_awr import agent_config
     from isaacgymenvs.clean_awr import env_config
+    flags.DEFINE_integer('slurm_job_id', -1, '')
 
     config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
     config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
