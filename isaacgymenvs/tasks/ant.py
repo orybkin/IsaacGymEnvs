@@ -29,6 +29,7 @@
 import numpy as np
 import os
 import torch
+import math
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
@@ -58,6 +59,7 @@ class Ant(VecTask):
         self.joints_at_limit_cost_scale = self.cfg["env"]["jointsAtLimitCost"]
         self.death_cost = self.cfg["env"]["deathCost"]
         self.termination_height = self.cfg["env"]["terminationHeight"]
+        self.goal_noise = self.cfg["env"]["goalNoise"]
 
         self.debug_viz = self.cfg["env"]["enableDebugVis"]
         self.plane_static_friction = self.cfg["env"]["plane"]["staticFriction"]
@@ -86,9 +88,11 @@ class Ant(VecTask):
         self.gym.refresh_dof_state_tensor(self.sim)
         self.gym.refresh_actor_root_state_tensor(self.sim)
 
-        self.root_states = gymtorch.wrap_tensor(actor_root_state)
-        self.initial_root_states = self.root_states.clone()
-        self.initial_root_states[:, 7:13] = 0  # set lin_vel and ang_vel to 0
+        root_states = gymtorch.wrap_tensor(actor_root_state).view(self.num_envs, -1, 13)
+        self.root_states = root_states[:, self.ant_handles[0], :]
+        self.goal_states = root_states[:, self._marker_id, :]
+        self.initial_root_states = root_states.clone()
+        self.initial_root_states[:, 0, 7:13] = 0  # set lin_vel and ang_vel to 0
 
         # create some wrapper tensors for different slices
         self.dof_state = gymtorch.wrap_tensor(dof_state_tensor)
@@ -113,6 +117,8 @@ class Ant(VecTask):
         self.dt = self.cfg["sim"]["dt"]
         self.potentials = to_torch([-1000./self.dt], device=self.device).repeat(self.num_envs)
         self.prev_potentials = self.potentials.clone()
+
+        self._global_indices = torch.arange(self.num_envs * 2, dtype=torch.int32, device=self.device).view(self.num_envs, -1)
 
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
@@ -156,6 +162,12 @@ class Ant(VecTask):
         self.num_dof = self.gym.get_asset_dof_count(ant_asset)
         self.num_bodies = self.gym.get_asset_rigid_body_count(ant_asset)
 
+        # Goal
+        asset_options = gymapi.AssetOptions()   
+        asset_options.fix_base_link = True
+        goal_asset = self.gym.create_sphere(self.sim, 0.2, asset_options)
+        default_pose = gymapi.Transform()
+
         # Note - for this asset we are loading the actuator info from the MJCF
         actuator_props = self.gym.get_asset_actuator_properties(ant_asset)
         motor_efforts = [prop.motor_effort for prop in actuator_props]
@@ -196,6 +208,10 @@ class Ant(VecTask):
 
             self.envs.append(env_ptr)
             self.ant_handles.append(ant_handle)
+
+            # Goal 
+            self._marker_id = self.gym.create_actor(env_ptr, goal_asset, default_pose, "marker", num_envs, 1, 0)
+            self.gym.set_rigid_body_color(env_ptr, self._marker_id, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(1, 0, 0))
 
         dof_prop = self.gym.get_actor_dof_properties(env_ptr, ant_handle)
         for j in range(self.num_dof):
@@ -286,24 +302,24 @@ class Ant(VecTask):
         positions = torch_rand_float(-0.2, 0.2, (len(env_ids), self.num_dof), device=self.device)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
-        # TODO
-        self.targets = (torch.rand_like(self.targets) - 0.5) * 100
+        self.targets = (torch.rand_like(self.targets) - 0.5) * self.goal_noise
         self.targets[:, 2] = 0
 
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
 
-        env_ids_int32 = env_ids.to(dtype=torch.int32)
-
+        self.initial_root_states[env_ids, 1, :3] = self.targets[env_ids] 
+        multi_env_ids_int32 = self._global_indices[env_ids, :].flatten().to(dtype=torch.int32)
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self.initial_root_states),
-                                                     gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+                                                     gymtorch.unwrap_tensor(multi_env_ids_int32), len(multi_env_ids_int32))
 
+        multi_env_ids_int32 = self._global_indices[env_ids, 0].flatten().to(dtype=torch.int32)
         self.gym.set_dof_state_tensor_indexed(self.sim,
                                               gymtorch.unwrap_tensor(self.dof_state),
-                                              gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+                                              gymtorch.unwrap_tensor(multi_env_ids_int32), len(multi_env_ids_int32))
 
-        to_target = self.targets[env_ids, 0:2] - self.initial_root_states[env_ids, 0:2]
+        to_target = self.targets[env_ids, 0:2] - self.initial_root_states[env_ids, 0, 0:2]
         self.prev_potentials[env_ids] = -torch.norm(to_target, p=2, dim=-1) / self.dt
         self.potentials[env_ids] = self.prev_potentials[env_ids].clone()
 
