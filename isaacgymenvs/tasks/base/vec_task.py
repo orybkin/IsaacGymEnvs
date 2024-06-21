@@ -540,6 +540,9 @@ class VecTask(Env):
             # self.gym.refresh_rigid_body_state_tensor(self.sim)
             self.gym.step_graphics(self.sim)
 
+    def _refresh(self):
+        pass
+
     def __parse_sim_params(self, physics_engine: str, config_sim: Dict[str, Any]) -> gymapi.SimParams:
         """Parse the config dictionary for physics stepping settings.
 

@@ -63,6 +63,7 @@ class Ant(VecTask):
         self.plane_static_friction = self.cfg["env"]["plane"]["staticFriction"]
         self.plane_dynamic_friction = self.cfg["env"]["plane"]["dynamicFriction"]
         self.plane_restitution = self.cfg["env"]["plane"]["restitution"]
+        self.success_threshold = self.cfg["env"]["successThreshold"]
 
         self.cfg["env"]["numObservations"] = 60
         self.cfg["env"]["numActions"] = 8
@@ -211,23 +212,40 @@ class Ant(VecTask):
         for i in range(len(extremity_names)):
             self.extremities_index[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.ant_handles[0], extremity_names[i])
 
-    def compute_reward(self, actions):
-        self.rew_buf[:], self.reset_buf[:] = compute_ant_reward(
-            self.obs_buf,
-            self.reset_buf,
-            self.progress_buf,
-            self.actions,
-            self.up_weight,
-            self.heading_weight,
-            self.potentials,
-            self.prev_potentials,
-            self.actions_cost_scale,
-            self.energy_cost_scale,
-            self.joints_at_limit_cost_scale,
-            self.termination_height,
-            self.death_cost,
-            self.max_episode_length
-        )
+    def compute_reward(self, actions, obs_buf):
+        reset_buf = self.reset_buf
+        progress_buf = self.progress_buf
+
+
+        # aligning up axis of ant and environment
+        up_reward = torch.zeros_like(obs_buf[:, 11])
+        up_reward = torch.where(obs_buf[:, 10] > 0.93, up_reward + self.up_weight, up_reward)
+
+        # energy penalty for movement
+        actions_cost = torch.sum(actions ** 2, dim=-1)
+        electricity_cost = torch.sum(torch.abs(actions * obs_buf[:, 20:28]), dim=-1)
+        dof_at_limit_cost = torch.sum(obs_buf[:, 12:20] > 0.99, dim=-1)
+
+        # reward for duration of staying alive
+        potentials = self.potentials
+        prev_potentials = self.prev_potentials
+        alive_reward = torch.ones_like(potentials) * 0.5
+        progress_reward = potentials - prev_potentials
+
+        if self.success_threshold > 0:
+            to_target = self.targets[:, 0:2] - self.root_states[:, 0:2]
+            success = torch.norm(to_target, p=2, dim=-1) < self.success_threshold
+            progress_reward = success.float()
+
+        total_reward = progress_reward + alive_reward + up_reward - \
+            self.actions_cost_scale * actions_cost - self.energy_cost_scale * electricity_cost - dof_at_limit_cost * self.joints_at_limit_cost_scale
+
+        # adjust reward for fallen agents
+        total_reward = 0.01 * torch.where(obs_buf[:, 0] < self.termination_height, torch.ones_like(total_reward) * self.death_cost, total_reward)
+
+        # reset agents
+        reset = torch.where(progress_buf >= self.max_episode_length - 1, torch.ones_like(reset_buf), reset_buf)
+        return total_reward, reset
 
     def compute_observations(self):
         self.gym.refresh_dof_state_tensor(self.sim)
@@ -247,7 +265,16 @@ class Ant(VecTask):
         velocity = self.root_states[:, 7:10]
 
         # We optimize for the maximum velocity along the x-axis (forward)
-        self.extras['true_objective'] = velocity[:, 0].squeeze()
+        self.extras['true_objective_x'] = velocity[:, 0].squeeze().mean()
+        # compute velocity along the direction to target
+        to_target = self.targets[:, 0:2] - self.root_states[:, 0:2]
+        to_target = to_target / torch.norm(to_target, p=2, dim=-1)[:, None]
+        self.extras['true_objective'] = torch.sum(velocity[:, 0:2] * to_target, dim=-1).mean()
+
+        metrics = dict()
+        metrics["goal_dist"] = torch.norm(self.root_states[:, 0:2] - self.targets[:, 0:2], dim=-1)
+        metrics["success_1"] = torch.norm(self.root_states[:, 0:2] - self.targets[:, 0:2], dim=-1) < 1.0
+        self.extras["episodic"] = metrics
 
     def reset_idx(self, env_ids=None):
         if env_ids is None:
@@ -258,6 +285,10 @@ class Ant(VecTask):
 
         positions = torch_rand_float(-0.2, 0.2, (len(env_ids), self.num_dof), device=self.device)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
+
+        # TODO
+        self.targets = (torch.rand_like(self.targets) - 0.5) * 100
+        self.targets[:, 2] = 0
 
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)
         self.dof_vel[env_ids] = velocities
@@ -272,8 +303,7 @@ class Ant(VecTask):
                                               gymtorch.unwrap_tensor(self.dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
-        to_target = self.targets[env_ids] - self.initial_root_states[env_ids, 0:3]
-        to_target[:, 2] = 0.0
+        to_target = self.targets[env_ids, 0:2] - self.initial_root_states[env_ids, 0:2]
         self.prev_potentials[env_ids] = -torch.norm(to_target, p=2, dim=-1) / self.dt
         self.potentials[env_ids] = self.prev_potentials[env_ids].clone()
 
@@ -295,7 +325,7 @@ class Ant(VecTask):
             self.reset_idx(env_ids)
 
         self.compute_observations()
-        self.compute_reward(self.actions)
+        self.rew_buf[:], self.reset_buf[:] = self.compute_reward(self.actions, self.obs_buf)
         self.compute_true_objective()
         self.done = self.reset_buf.clone()
 
@@ -326,55 +356,6 @@ class Ant(VecTask):
 
 
 @torch.jit.script
-def compute_ant_reward(
-    obs_buf,
-    reset_buf,
-    progress_buf,
-    actions,
-    up_weight,
-    heading_weight,
-    potentials,
-    prev_potentials,
-    actions_cost_scale,
-    energy_cost_scale,
-    joints_at_limit_cost_scale,
-    termination_height,
-    death_cost,
-    max_episode_length
-):
-    # type: (Tensor, Tensor, Tensor, Tensor, float, float, Tensor, Tensor, float, float, float, float, float, float) -> Tuple[Tensor, Tensor]
-
-    # reward from direction headed
-    heading_weight_tensor = torch.ones_like(obs_buf[:, 11]) * heading_weight
-    heading_reward = torch.where(obs_buf[:, 11] > 0.8, heading_weight_tensor, heading_weight * obs_buf[:, 11] / 0.8)
-
-    # aligning up axis of ant and environment
-    up_reward = torch.zeros_like(heading_reward)
-    up_reward = torch.where(obs_buf[:, 10] > 0.93, up_reward + up_weight, up_reward)
-
-    # energy penalty for movement
-    actions_cost = torch.sum(actions ** 2, dim=-1)
-    electricity_cost = torch.sum(torch.abs(actions * obs_buf[:, 20:28]), dim=-1)
-    dof_at_limit_cost = torch.sum(obs_buf[:, 12:20] > 0.99, dim=-1)
-
-    # reward for duration of staying alive
-    alive_reward = torch.ones_like(potentials) * 0.5
-    progress_reward = potentials - prev_potentials
-
-    total_reward = progress_reward + alive_reward + up_reward + heading_reward - \
-        actions_cost_scale * actions_cost - energy_cost_scale * electricity_cost - dof_at_limit_cost * joints_at_limit_cost_scale
-
-    # adjust reward for fallen agents
-    total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
-
-    # reset agents
-    reset = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(reset_buf), reset_buf)
-    reset = torch.where(progress_buf >= max_episode_length - 1, torch.ones_like(reset_buf), reset)
-
-    return total_reward, reset
-
-
-@torch.jit.script
 def compute_ant_observations(obs_buf, root_states, targets, potentials,
                              inv_start_rot, dof_pos, dof_vel,
                              dof_limits_lower, dof_limits_upper, dof_vel_scale,
@@ -387,8 +368,7 @@ def compute_ant_observations(obs_buf, root_states, targets, potentials,
     velocity = root_states[:, 7:10]
     ang_velocity = root_states[:, 10:13]
 
-    to_target = targets - torso_position
-    to_target[:, 2] = 0.0
+    to_target = targets - torso_position[:, 0:3]
 
     prev_potentials_new = potentials.clone()
     potentials = -torch.norm(to_target, p=2, dim=-1) / dt
@@ -406,6 +386,6 @@ def compute_ant_observations(obs_buf, root_states, targets, potentials,
                      yaw.unsqueeze(-1), roll.unsqueeze(-1), angle_to_target.unsqueeze(-1),
                      up_proj.unsqueeze(-1), heading_proj.unsqueeze(-1), dof_pos_scaled,
                      dof_vel * dof_vel_scale, sensor_force_torques.view(-1, 24) * contact_force_scale,
-                     actions), dim=-1)
+                     actions), dim=-1)  
 
     return obs, potentials, prev_potentials_new, up_vec, heading_vec

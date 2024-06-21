@@ -27,6 +27,7 @@ env:
   jointsAtLimitCost: 0.1
   deathCost: -2.0
   terminationHeight: 0.31
+  successThreshold: 0
 
   plane:
     staticFriction: 1.0
