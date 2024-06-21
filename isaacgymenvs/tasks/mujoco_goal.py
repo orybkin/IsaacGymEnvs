@@ -80,6 +80,6 @@ class MujocoGoal:
         success = [i['is_success'] for i in info]
         return self.cat(obs), r, np.array(terminated), np.array(truncated), {'episodic': {'success': torch.Tensor(success)}}
     
-    def compute_franka_reward(self, d):
+    def compute_reward_stateless(self, d):
         rewards = torch.Tensor(self.env.env_method("compute_reward", d['goal_pos'].cpu(), d['achieved_goal'].cpu(), {}, indices=[0]))[0].cuda()
         return rewards

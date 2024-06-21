@@ -467,7 +467,7 @@ class FrankaReaching(VecTask):
         self._update_states()
 
     def compute_reward(self, actions):
-        self.rew_buf[:], self.reset_buf[:] = compute_franka_reward(
+        self.rew_buf[:], self.reset_buf[:] = compute_reward_stateless(
             self.reset_buf, self.progress_buf, self.actions, self.states, self.reward_settings, self.max_episode_length
         )
 
@@ -769,7 +769,7 @@ class FrankaReaching(VecTask):
 
 
 @torch.jit.script
-def compute_franka_reward(
+def compute_reward_stateless(
     reset_buf, progress_buf, actions, states, reward_settings, max_episode_length
 ):
     # type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float) -> Tuple[Tensor, Tensor]

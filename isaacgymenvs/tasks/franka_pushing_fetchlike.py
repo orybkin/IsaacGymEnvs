@@ -865,7 +865,7 @@ class FrankaPushingFetchlike(VecTask):
         
         # Produce observation
         self.compute_observations()
-        self.rew_buf[:] = self.compute_franka_reward(self.states)
+        self.rew_buf[:] = self.compute_reward_stateless(self.states)
 
         # Extra logging
         if 'images' in self.extras:
@@ -921,7 +921,7 @@ class FrankaPushingFetchlike(VecTask):
         #             self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], py[0], py[1], py[2]], [0.1, 0.85, 0.1])
         #             self.gym.add_lines(self.viewer, self.envs[i], 1, [p0[0], p0[1], p0[2], pz[0], pz[1], pz[2]], [0.1, 0.1, 0.85])
 
-    def compute_franka_reward(self, states):
+    def compute_reward_stateless(self, states):
         ## type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float, float, float, float) -> Tuple[Tensor, Tensor]
 
         # distance from cube to the goal

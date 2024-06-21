@@ -49,7 +49,7 @@ class FrankaReaching2(FrankaPushing):
         self.target_name = 'eef_pos'
 
 
-    def compute_franka_reward(self, states):
+    def compute_reward_stateless(self, states):
         ## type: (Tensor, Tensor, Tensor, Dict[str, Tensor], Dict[str, float], float, float, float, float) -> Tuple[Tensor, Tensor]
 
         # distance from cube to the goal

@@ -211,23 +211,26 @@ class AWRAgent():
         obs = relabeled_buffer.tensor_dict['obses']
         # compute episode idx
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
-        desired = torch.gather(obs[:, :, env.achieved_idx], 0, idx)
+        next_desired = torch.gather(obs[:, :, env.achieved_idx], 0, idx)
 
-        relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = desired
-        achieved = obs[..., env.achieved_idx]
-
-        # Rewards should be shifted by one
-        last_obs = dict(obs=self.obs['obs'].clone())
-        last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
-        desired = torch.cat([desired[1:], last_obs['obs'][None, :, env.desired_idx]], 0)
-        achieved = torch.cat([achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
+        relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = next_desired
+        next_achieved = obs[..., env.achieved_idx]
 
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         res_dict = self.run_model_in_slices(obs, relabeled_buffer.tensor_dict['actions'], relabeled_buffer.tensor_dict.keys())
         relabeled_buffer.tensor_dict.update(res_dict)
 
+        # Rewards should be shifted by one
+        last_obs = dict(obs=self.obs['obs'].clone())
+        last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
+        next_desired = torch.cat([next_desired[1:], last_obs['obs'][None, :, env.desired_idx]], 0)
+        next_achieved = torch.cat([next_achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
+        next_obs = torch.cat([obs[1:], last_obs['obs'][None]], 0)
+
         # Rewards
-        rewards = env.compute_franka_reward({'goal_pos': desired, env.target_name: achieved})[:, :, None]
+        rewards = env.compute_reward_stateless({'goal_pos': next_desired, env.target_name: next_achieved,
+                                                'actions': relabeled_buffer.tensor_dict['actions'],
+                                                'obs': next_obs})[:, :, None]
         rewards = rewards.to(self.device)
 
         # TODO there is something funny about this - why the multiply by gamma?
@@ -668,13 +671,13 @@ class AWRAgent():
             # ===============================
             # Evaluate policy in test mode.
             # ===============================
-            iteration = (self.frame - self.start_frame) / self.config['num_actors']
-            if test_check.check(iteration):
-                print("Testing...")
-                test_counter += 1
-                self.test(render=test_render_check.check(test_counter))
-                self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')
-                print("Done Testing.")
+            # iteration = (self.frame - self.start_frame) / self.config['num_actors']
+            # if test_check.check(iteration):
+            #     print("Testing...")
+            #     test_counter += 1
+            #     self.test(render=test_render_check.check(test_counter))
+            #     self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')
+            #     print("Done Testing.")
 
 
 # =======================
@@ -721,7 +724,7 @@ def main(_):
         id=run_name,
         name=run_name,
         config={'agent': dict(FLAGS.agent), 'env': dict(FLAGS.env), 'experiment': FLAGS.agent['experiment']},
-        settings=wandb.Settings(start_method='fork'),
+        # settings=wandb.Settings(start_method='fork'),
     )
 
     agent = AWRAgent(FLAGS.agent, RLGPUAlgoObserver(run_name))
