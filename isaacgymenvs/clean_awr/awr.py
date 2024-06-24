@@ -213,7 +213,7 @@ class AWRAgent():
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
         next_desired = torch.gather(obs[:, :, env.achieved_idx], 0, idx)
 
-        relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = next_desired
+        # relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = next_desired
         next_achieved = obs[..., env.achieved_idx]
 
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
@@ -222,16 +222,16 @@ class AWRAgent():
 
         # Rewards should be shifted by one
         last_obs = dict(obs=self.obs['obs'].clone())
-        last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
+        # last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
         next_desired = torch.cat([next_desired[1:], last_obs['obs'][None, :, env.desired_idx]], 0)
         next_achieved = torch.cat([next_achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
         next_obs = torch.cat([obs[1:], last_obs['obs'][None]], 0)
-
         # Rewards
         rewards = env.compute_reward_stateless({'goal_pos': next_desired, env.target_name: next_achieved,
                                                 'actions': relabeled_buffer.tensor_dict['actions'],
                                                 'obs': next_obs})[:, :, None]
         rewards = rewards.to(self.device)
+        # (rewards == relabeled_buffer.tensor_dict['rewards']).sum() / 16 / 32768
 
         # TODO there is something funny about this - why the multiply by gamma?
         if self.config['value_bootstrap']:
@@ -735,12 +735,16 @@ if __name__ == '__main__':
     from isaacgymenvs.clean_awr import env_config
     flags.DEFINE_integer('slurm_job_id', -1, '')
 
-    config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
-    config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('agent', agent_config.fetch_push_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('env', env_config.fetch_push_config, lock_config=False)
 
     # config_flags.DEFINE_config_dict('agent', agent_config.ig_push_config, lock_config=False)
     # config_flags.DEFINE_config_dict('env', env_config.ig_push_config, lock_config=False)
 
-    flags.DEFINE_integer('slurm_job_id', -1, '')
+    # config_flags.DEFINE_config_dict('agent', agent_config.ig_fetchlike_config, lock_config=False)
+    # config_flags.DEFINE_config_dict('env', env_config.ig_fetchlike_config, lock_config=False)
+
+    config_flags.DEFINE_config_dict('agent', agent_config.ant_config, lock_config=False)
+    config_flags.DEFINE_config_dict('env', env_config.ant_config, lock_config=False)
 
     app.run(main)
