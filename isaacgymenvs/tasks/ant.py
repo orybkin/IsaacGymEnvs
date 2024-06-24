@@ -261,9 +261,12 @@ class Ant(VecTask):
         total_reward = 0.01 * torch.where(obs_buf[..., 4] < self.termination_height, torch.ones_like(total_reward) * self.death_cost, total_reward)
         return total_reward
 
-    def compute_reward_stateless(self, states):
+    def compute_reward_stateless(self, states, raw_actions=True):
         assert self.success_threshold > 0
-        return self.compute_reward(states['actions'], states['obs'])
+        actions = states['actions']
+        if raw_actions:
+            actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+        return self.compute_reward(actions, states['obs'])
 
 
     def compute_observations(self):
