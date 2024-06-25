@@ -213,7 +213,7 @@ class AWRAgent():
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
         next_desired = torch.gather(obs[:, :, env.achieved_idx], 0, idx)
 
-        # relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = next_desired
+        relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = next_desired
         next_achieved = obs[..., env.achieved_idx]
 
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
@@ -222,7 +222,7 @@ class AWRAgent():
 
         # Rewards should be shifted by one
         last_obs = dict(obs=self.obs['obs'].clone())
-        # last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
+        last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
         next_desired = torch.cat([next_desired[1:], last_obs['obs'][None, :, env.desired_idx]], 0)
         next_achieved = torch.cat([next_achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
         next_obs = torch.cat([obs[1:], last_obs['obs'][None]], 0)
