@@ -716,6 +716,9 @@ def main(_):
         run_name = f"{time_str}_{FLAGS.agent['experiment']}"
     FLAGS.agent['run_name'] = run_name
 
+    env = dict(FLAGS.env)
+    env['env'] = dict(env['env'])
+    env['sim'] = dict(env['sim'])
     wandb.init(
         project='taskmaster',
         entity='oleh-rybkin',
@@ -723,7 +726,7 @@ def main(_):
         sync_tensorboard=True,
         id=run_name,
         name=run_name,
-        config={'agent': dict(FLAGS.agent), 'env': dict(FLAGS.env), 'experiment': FLAGS.agent['experiment']},
+        config={'agent': dict(FLAGS.agent), 'env': env, 'experiment': FLAGS.agent['experiment']},
         # settings=wandb.Settings(start_method='fork'),
     )
 
