@@ -718,7 +718,8 @@ def main(_):
 
     env = dict(FLAGS.env)
     env['env'] = dict(env['env'])
-    env['sim'] = dict(env['sim'])
+    if 'sim' in env:
+        env['sim'] = dict(env['sim'])
     wandb.init(
         project='taskmaster',
         entity='oleh-rybkin',
