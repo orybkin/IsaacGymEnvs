@@ -316,8 +316,10 @@ class AWRAgent():
     def train_awr(self, original_dict, relabeled_dict):
         loss = [0, 0]
         loss_coef = [1.0, 1.0]
-        loss_critic_coef = [1.0, 1.0]
-        loss_actor_coef = [1.0, 1.0]
+        rcc = self.config.get('relabeled_critic_coef', 1.0)
+        rac = self.config.get('relabeled_actor_coef', 1.0)
+        loss_critic_coef = [1.0, rcc]
+        loss_actor_coef = [1.0, rac]
         losses_dict = {}
         diagnostics = {}
         for i, input_dict in enumerate([original_dict, relabeled_dict]):

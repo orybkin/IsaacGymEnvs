@@ -308,7 +308,13 @@ class Ant(VecTask):
         positions = torch_rand_float(-0.2, 0.2, (len(env_ids), self.num_dof), device=self.device)
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
-        self.targets = (torch.rand_like(self.targets) - 0.5) * self.goal_noise
+        noise = (torch.rand_like(self.targets) - 0.5) * self.goal_noise
+
+        # # Remove easy goals
+        # inner_limit = self.goal_noise / 4
+        # noise = torch.where(torch.abs(noise) < inner_limit, torch.sign(noise) * inner_limit + noise, noise)
+
+        self.targets = noise
         self.targets[:, 2] = 0
 
         self.dof_pos[env_ids] = tensor_clamp(self.initial_dof_pos[env_ids] + positions, self.dof_limits_lower, self.dof_limits_upper)

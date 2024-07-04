@@ -778,6 +778,11 @@ class FrankaPushingFetchlike(VecTask):
         sampled_goal_state[:, 2] = center[2]
 
         noise = 2.0 * self.goal_position_noise * (torch.rand(num_resets, 2, device=self.device) - 0.5)
+
+        # # Remove easy goals
+        # inner_limit = self.goal_position_noise / 2
+        # noise = torch.where(torch.abs(noise) < inner_limit, torch.sign(noise) * inner_limit + noise, noise)
+
         limit = self.start_position_noise
         sampled_goal_state[:, :2] = center[:2][None] + noise
         if self.mode == 'close':
