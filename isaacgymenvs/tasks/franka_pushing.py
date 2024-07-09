@@ -101,7 +101,7 @@ class FrankaPushing(VecTask):
 
         # modes 
         self.mode = self.cfg["env"].get("mode", '')
-        assert self.mode in ['', 'easy', 'grasping', 'close']
+        assert self.mode in ['', 'easy', 'grasping', 'close', 'onlygrasping']
         self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
 
         self.achieved_idx = [14,15,16]
