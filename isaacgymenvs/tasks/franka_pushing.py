@@ -856,6 +856,9 @@ class FrankaPushing(VecTask):
             # sampled_goal_state[:, 2] = center[2] + 0.14 * torch.rand(num_resets, device=self.device)
             sampled_goal_state[::2, 2] = center[2] + 0.14 * torch.rand(num_resets // 2, device=self.device)
 
+        if self.mode == 'onlygrasping':
+            sampled_goal_state[:, 2] = center[2] + 0.14 * torch.rand(num_resets, device=self.device)
+
         if self.test:
             sampled_goal_state[:, 0] = center[0] + 0.11
             sampled_goal_state[:, 1] = center[1] - 0.11

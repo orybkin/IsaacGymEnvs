@@ -162,6 +162,7 @@ ant_config = ml_collections.ConfigDict({
         "terminationHeight": 0.31,
         "successThreshold": 0.0,
         "goalNoise": 100.0,
+        "goalOffset": 0.0,
         "plane": {
             "staticFriction": 1.0,
             "dynamicFriction": 1.0,

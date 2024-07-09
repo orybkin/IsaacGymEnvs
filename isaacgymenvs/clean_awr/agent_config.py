@@ -34,6 +34,8 @@ fetch_push_config = ml_collections.ConfigDict({
     'grad_norm': 5,
     'action_bound': 1.1, 
     'norm_by_return': 0,
+    'relabeled_critic_coef': 1.0,
+    'relabeled_actor_coef': 1.0,
 })
 
 ig_push_config = ml_collections.ConfigDict({
@@ -69,6 +71,8 @@ ig_push_config = ml_collections.ConfigDict({
     'grad_norm': 5,
     'action_bound': 1.1,
     'norm_by_return': 0,
+    'relabeled_critic_coef': 1.0,
+    'relabeled_actor_coef': 1.0,
 })
 
 
@@ -143,4 +147,6 @@ ant_config = ml_collections.ConfigDict({
     'grad_norm': 5,
     'action_bound': 1.1, 
     'norm_by_return': 0,
+    'relabeled_critic_coef': 1.0,
+    'relabeled_actor_coef': 1.0,
 })

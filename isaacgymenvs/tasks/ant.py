@@ -309,11 +309,9 @@ class Ant(VecTask):
         velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
 
         noise = (torch.rand_like(self.targets) - 0.5) * self.goal_noise
-
-        # # Remove easy goals
-        # inner_limit = self.goal_noise / 4
-        # noise = torch.where(torch.abs(noise) < inner_limit, torch.sign(noise) * inner_limit + noise, noise)
-
+        # Remove easy goals
+        goal_offset = self.cfg["env"]["goalOffset"]
+        noise = torch.where(torch.abs(noise) < goal_offset, torch.sign(noise) * goal_offset + noise, noise)
         self.targets = noise
         self.targets[:, 2] = 0
 
