@@ -190,18 +190,26 @@ class AWRAgent():
                                                      
         return res_dict
 
+    # def get_relabel_idx(self, env, dones):
+    #     # does 1 denote the end or the beginnig of the episode?
+    #     idx = dones # [0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
+    #     present, first_idx = idx.max(0)
+    #     first_idx[present == 0] = self.config['horizon_length'] - 1
+    #     idx = idx.flip(0).cumsum(0).flip(0) # [2, 2, 2, 1, 1, 1, 1, 0, 0, 0]
+    #     idx = idx[[0]] - idx # [0, 0, 0, 1, 1, 1, 1, 2, 2, 2]
+    #     # Compute last frame id
+    #     ep_len = env.max_episode_length
+    #     idx = idx * ep_len + first_idx[None, :] 
+    #     idx = torch.minimum(idx, (dones.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
+    #     idx = idx.repeat(1, 1, len(env.achieved_idx))
+    #     return idx
+
     def get_relabel_idx(self, env, dones):
-        idx = dones
-        present, first_idx = idx.max(0)
-        first_idx[present == 0] = self.config['horizon_length'] - 1
-        idx = idx.flip(0).cumsum(0).flip(0)
-        idx = idx[[0]] - idx
-        # Compute last frame idx
-        ep_len = env.max_episode_length
-        idx = idx * ep_len + first_idx[None, :]
-        idx = torch.minimum(idx, (dones.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
-        idx = idx.repeat(1, 1, len(env.achieved_idx))
-        return idx
+        dones = dones.clone()
+        dones[-1] = 1 # for last episode, use last existing frame
+        next_done_idx = dones.shape[0] - 1 - dones.flip(0).cummax(0).indices.flip(0)
+        next_done_idx = next_done_idx[:, :, None].repeat(1, 1, len(env.achieved_idx))
+        return next_done_idx
 
     def relabel_batch(self, buffer):
         env = self.vec_env.env
