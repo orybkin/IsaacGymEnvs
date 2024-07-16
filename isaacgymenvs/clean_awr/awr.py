@@ -211,10 +211,45 @@ class AWRAgent():
         next_done_idx = next_done_idx[:, :, None].repeat(1, 1, len(env.achieved_idx))
         return next_done_idx
 
+    def relabeling_strategy(self, dones):
+        relabel_every = self.config.get('relabel_every', dones.shape[0])
+        assert self.config['relabel_strategy'] in ['final', 'constant', 'uniform', 'geometric']
+
+        if self.config['relabel_strategy'] == 'final':
+            # By default, relabel with final state
+            return dones
+
+        if self.config['relabel_strategy'] == 'constant':
+            # Make relabeled episodes of length relabeled_every
+            dones[relabel_every-1::relabel_every] = 1
+            return dones
+
+        if self.config['relabel_strategy'] == 'uniform': 
+            # Uniform length up to relabeled_every
+            relabel_idx = torch.randint(0, relabel_every, (self.config['horizon_length'], self.config['num_actors']), device=self.device)
+            relabel_idx = relabel_idx.cumsum(0)
+            relabel_idx[relabel_idx >= dones.shape[0]] = dones.shape[0] - 1
+            dones.scatter_(0, relabel_idx, 1)
+            return dones
+        
+        if self.config['relabel_strategy'] == 'geometric':
+            # Geometric distribution with p ~ 1 / relabel_every
+            p = 1 / relabel_every
+            uniform = torch.rand((self.config['horizon_length'], self.config['num_actors']), device=self.device)
+            relabel_idx = torch.floor(torch.log(uniform) / math.log(1 - p)).int()
+            relabel_idx = relabel_idx.cumsum(0)
+            relabel_idx[relabel_idx >= dones.shape[0]] = dones.shape[0] - 1
+            dones.scatter_(0, relabel_idx, 1)
+            return dones
+
+        
+
     def relabel_batch(self, buffer):
         env = self.vec_env.env
         relabeled_buffer = copy.deepcopy(buffer)
 
+        relabeled_buffer.tensor_dict['dones'] = self.relabeling_strategy(relabeled_buffer.tensor_dict['dones'])
+        
         # Relabel states
         obs = relabeled_buffer.tensor_dict['obses']
         # compute episode idx
