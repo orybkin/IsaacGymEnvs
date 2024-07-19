@@ -22,6 +22,7 @@ import wandb
 from datetime import datetime
 
 from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, _neglogp
+from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork
 from isaacgymenvs.clean_awr.awr_utils import AWRDataset, Diagnostics, ExperienceBuffer
 from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every
 import ml_collections
@@ -128,6 +129,9 @@ class AWRAgent():
         )
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
+        self.temporal_distance = TemporalDistanceNetwork(self.obs_shape, self.config['hidden_dims'], self.vec_env.env.achieved_idx)
+        self.temporal_distance.to(self.device)
+        self.temporal_distance_optimizer = optim.Adam(self.temporal_distance.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
         if self.config['normalize_value']:
             self.value_mean_std = self.model.value_mean_std
         self.dataset = AWRDataset(self.batch_size, self.minibatch_size, self.device)
@@ -242,8 +246,6 @@ class AWRAgent():
             relabel_idx[relabel_idx >= dones.shape[0]] = dones.shape[0] - 1
             dones.scatter_(0, relabel_idx, 1)
             return dones
-
-        
 
     def relabel_batch(self, buffer):
         env = self.vec_env.env
@@ -441,6 +443,8 @@ class AWRAgent():
             nn.utils.clip_grad_norm_(self.model.parameters(), self.config['grad_norm'])
         self.optimizer.step()
         self.optimizer.zero_grad()
+
+        self.temporal_distance(original_dict)
 
         self.diagnostics.mini_batch(self, diagnostics)      
 
