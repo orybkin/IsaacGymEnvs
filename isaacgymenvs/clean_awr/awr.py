@@ -780,8 +780,6 @@ def main(_):
     agent.train()
 
 if __name__ == '__main__':
-    from isaacgymenvs.clean_awr import agent_config
-    from isaacgymenvs.clean_awr import env_config
     flags.DEFINE_integer('slurm_job_id', -1, '')
     config_flags.DEFINE_config_file('agent', 'clean_awr/agent_config/ig_push.py', 'Agent configuration.', lock_config=False)
     config_flags.DEFINE_config_file('env', 'clean_awr/env_config/ig_push.py', 'Env configuration.', lock_config=False)
