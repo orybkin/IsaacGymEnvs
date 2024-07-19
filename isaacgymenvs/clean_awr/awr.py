@@ -256,8 +256,8 @@ class AWRAgent():
         next_achieved = obs[..., env.achieved_idx]
         # Set desired goal to achieved goal at a future state
         onpolicy_desired = obs[:, :, env.desired_idx]
-        next_desired = a * torch.gather(obs[:, :, env.achieved_idx], 0, idx) + (1 - a) * onpolicy_desired
         a = self.config['goal_interpolation']
+        next_desired = a * torch.gather(obs[:, :, env.achieved_idx], 0, idx) + (1 - a) * onpolicy_desired
         obs[:, :, env.desired_idx] = next_desired
 
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
@@ -276,7 +276,6 @@ class AWRAgent():
                                                 'obs': next_obs})[:, :, None]
         rewards = rewards.to(self.device)
         # (rewards == relabeled_buffer.tensor_dict['rewards']).sum() / 16 / 32768
-        import pdb; pdb.set_trace()
 
         # TODO there is something funny about this - why the multiply by gamma?
         if self.config['value_bootstrap']:
