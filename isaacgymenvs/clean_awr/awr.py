@@ -359,7 +359,7 @@ class AWRAgent():
 
     def train_awr(self, original_dict, relabeled_dict):
         loss = [0, 0]
-        loss_coef = [1.0, 1.0]
+        loss_coef = [self.config.get('onpolicy_coef', 1.0), 1.0]
         rcc = self.config.get('relabeled_critic_coef', 1.0)
         rac = self.config.get('relabeled_actor_coef', 1.0)
         loss_critic_coef = [1.0, rcc]
