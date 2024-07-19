@@ -36,7 +36,7 @@ ant_config = ml_collections.ConfigDict({
     'norm_by_return': 0,
     'relabeled_critic_coef': 1.0,
     'relabeled_actor_coef': 1.0,
-    'relabeled_every': 0,
+    'relabel_every': 0,
     'relabel_strategy': 'final',
 })
 
