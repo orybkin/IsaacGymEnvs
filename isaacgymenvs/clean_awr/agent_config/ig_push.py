@@ -39,6 +39,7 @@ ig_push_config = ml_collections.ConfigDict({
     'relabel_every': 0,
     'relabel_strategy': 'final',
     'goal_interpolation': 1.,
+    'onpolicy_coef': 1., 
 })
 
 def get_config():

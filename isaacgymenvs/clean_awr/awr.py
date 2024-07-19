@@ -643,6 +643,7 @@ class AWRAgent():
                 self.set_eval()
                 self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=self.config['joint_value_norm'], fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='_relabeled', )
                 kl_dataset = self.relabeled_dataset
+                self.relabeled_dataset.shuffle()
                 self.set_train()
             relabeled_minibatch = None
             self.algo_observer.after_steps()
