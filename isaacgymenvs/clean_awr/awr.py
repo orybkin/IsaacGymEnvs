@@ -252,12 +252,13 @@ class AWRAgent():
         
         # Relabel states
         obs = relabeled_buffer.tensor_dict['obses']
-        # compute episode idx
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
-        next_desired = torch.gather(obs[:, :, env.achieved_idx], 0, idx)
-
-        relabeled_buffer.tensor_dict['obses'][:, :, env.desired_idx] = next_desired
         next_achieved = obs[..., env.achieved_idx]
+        # Set desired goal to achieved goal at a future state
+        onpolicy_desired = obs[:, :, env.desired_idx]
+        next_desired = a * torch.gather(obs[:, :, env.achieved_idx], 0, idx) + (1 - a) * onpolicy_desired
+        a = self.config['goal_interpolation']
+        obs[:, :, env.desired_idx] = next_desired
 
         # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
         res_dict = self.run_model_in_slices(obs, relabeled_buffer.tensor_dict['actions'], relabeled_buffer.tensor_dict.keys())
@@ -265,7 +266,7 @@ class AWRAgent():
 
         # Rewards should be shifted by one
         last_obs = dict(obs=self.obs['obs'].clone())
-        last_obs['obs'][:, env.desired_idx] = relabeled_buffer.tensor_dict['obses'][-1, :, env.desired_idx]
+        last_obs['obs'][:, env.desired_idx] = a * obs[-1, :, env.desired_idx] + (1 - a) * onpolicy_desired[-1]
         next_desired = torch.cat([next_desired[1:], last_obs['obs'][None, :, env.desired_idx]], 0)
         next_achieved = torch.cat([next_achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
         next_obs = torch.cat([obs[1:], last_obs['obs'][None]], 0)
@@ -275,6 +276,7 @@ class AWRAgent():
                                                 'obs': next_obs})[:, :, None]
         rewards = rewards.to(self.device)
         # (rewards == relabeled_buffer.tensor_dict['rewards']).sum() / 16 / 32768
+        import pdb; pdb.set_trace()
 
         # TODO there is something funny about this - why the multiply by gamma?
         if self.config['value_bootstrap']:
