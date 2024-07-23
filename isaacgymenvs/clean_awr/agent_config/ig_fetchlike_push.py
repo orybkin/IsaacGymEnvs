@@ -38,7 +38,7 @@ ig_fetchlike_config = ml_collections.ConfigDict({
     'relabeled_actor_coef': 1.0,
     'relabel_every': 0,
     'relabel_strategy': 'final',
-    'goal_interpolation': 1,
+    'goal_interpolation': 1.,
     'onpolicy_coef': 1.,
 })
 
