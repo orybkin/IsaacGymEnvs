@@ -242,8 +242,6 @@ class AWRAgent():
             dones.scatter_(0, relabel_idx, 1)
             return dones
 
-        
-
     def relabel_batch(self, buffer):
         env = self.vec_env.env
         relabeled_buffer = copy.deepcopy(buffer)
@@ -519,6 +517,47 @@ class AWRAgent():
             self.vec_env.env.override_render = False
         self.env_reset()
 
+    def get_novelty(self, vectors, num_bins=20, min_val=-0.15, max_val=0.15):
+        # Compute a 2D histogram novelty        
+        edges = torch.linspace(min_val, max_val, num_bins + 1, device=vectors.device)
+        indices_x = torch.bucketize(vectors[:, 0], edges) - 1
+        indices_y = torch.bucketize(vectors[:, 1], edges) - 1
+        # Remove outliers
+        mask_x = (indices_x >= 0) & (indices_x < num_bins)
+        mask_y = (indices_y >= 0) & (indices_y < num_bins)
+        mask = mask_x & mask_y
+        indices = indices_y[mask] * num_bins + indices_x[mask]
+        hist_2d = torch.bincount(indices, minlength=num_bins*num_bins).reshape(num_bins, num_bins)
+        
+        # save histogram as image to disk using plt
+        import matplotlib.pyplot as plt
+        # hist_2d[num_bins//2, num_bins//2] = 0
+        # hist_2d[num_bins//2 - 1, num_bins//2 - 1] = 0   
+        plt.imshow(hist_2d.cpu().numpy())
+        plt.colorbar()
+        wandb.log({"visitation": plt})
+        plt.close()
+
+        hist_2d = hist_2d / hist_2d.sum()
+        novelty = torch.zeros(vectors.shape[0], device=vectors.device)
+        novelty[mask] = 1 - hist_2d[indices_y[mask], indices_x[mask]]
+
+        # novelty plot
+        fraction_selected = 8 
+        n_selected = self.relabeled_dataset.idx.shape[0] // fraction_selected
+        assert n_selected * fraction_selected == self.relabeled_dataset.idx.shape[0]
+        idx_selected = torch.topk(novelty, n_selected)[1]
+
+        indices = indices_y[idx_selected] * num_bins + indices_x[idx_selected]
+        hist_2d = torch.bincount(indices, minlength=num_bins*num_bins).reshape(num_bins, num_bins)
+        plt.imshow(hist_2d.cpu().numpy())
+        plt.colorbar()
+        wandb.log({"novelty": plt})
+        plt.close()
+
+        return novelty
+
+
     def train(self):
         batch_size = self.config['num_actors']
 
@@ -645,6 +684,31 @@ class AWRAgent():
                 kl_dataset = self.relabeled_dataset
                 self.relabeled_dataset.shuffle()
                 self.set_train()
+
+                buffer_size = self.relabeled_dataset.idx.shape[0]
+                fraction_selected = 8 
+                n_selected = buffer_size // fraction_selected
+                assert n_selected * fraction_selected == buffer_size
+                assert self.config['relabel_filtering'] in ['novelty', 'corners', 'random', 'all']
+
+                if self.config['relabel_filtering'] == 'novelty':
+                     # Select most novel goals
+                    novelty = self.get_novelty(self.relabeled_dataset.values_dict['obs'][:, self.vec_env.env.achieved_idx], 20)
+                    self.relabeled_dataset.idx = torch.topk(novelty, n_selected)[1].repeat(fraction_selected)
+                    self.relabeled_dataset.shuffle()
+
+                elif self.config['relabel_filtering'] == 'corners':
+                    goals = self.relabeled_dataset.values_dict['obs'][:, self.vec_env.env.achieved_idx]
+                    mask = (goals[:, 0] > -0.15) & (goals[:, 0] < 0.15) & (goals[:, 1] > -0.15) & (goals[:, 1] < 0.15)
+                    mask = mask & (torch.norm(goals[:, :2], dim=1) > 0.15)
+                    n_selected = mask.sum()
+                    fraction_selected = buffer_size // n_selected  + 1
+                    self.relabeled_dataset.idx = self.relabeled_dataset.idx[mask].repeat(fraction_selected)[:buffer_size]
+
+                elif self.config['relabel_filtering'] == 'random':
+                    self.relabeled_dataset.idx = self.relabeled_dataset.idx[:n_selected].repeat(fraction_selected)
+
+
             relabeled_minibatch = None
             self.algo_observer.after_steps()
             metrics = defaultdict(list)
