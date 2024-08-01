@@ -120,10 +120,11 @@ class AWRAgent():
             actions_num=self.actions_num,
             input_shape = self.obs_shape,
             num_seqs = self.config['num_actors'],
-            units = (256, 128, 64),
+            units = self.config['hidden_dims'],
             fixed_sigma = True,
             normalize_value = self.config['normalize_value'],
-            normalize_input = self.config['normalize_input']
+            normalize_input = self.config['normalize_input'],
+            separate=self.config['separate']
         )
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)

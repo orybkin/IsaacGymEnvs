@@ -32,9 +32,10 @@ def _neglogp(x, mean, std, logstd):
                 + logstd.sum(dim=-1)
 
 class AWRNetwork(nn.Module):
-    def __init__(self, actions_num, input_shape, num_seqs, units, fixed_sigma, normalize_value, normalize_input):
+    def __init__(self, actions_num, input_shape, num_seqs, units, fixed_sigma, normalize_value, normalize_input, separate=False):
         nn.Module.__init__(self)
 
+        self.separate = separate
         self.num_seqs = num_seqs
         self.units = units
         self.fixed_sigma = fixed_sigma
@@ -43,6 +44,8 @@ class AWRNetwork(nn.Module):
         self.normalize_input = normalize_input
 
         self.actor_mlp = _build_sequential_mlp(input_shape[0], units)
+        if self.separate:
+            self.critic_mlp = _build_sequential_mlp(input_shape[0], units)
         self.value = torch.nn.Linear(units[-1], 1)
         self.mu = torch.nn.Linear(units[-1], actions_num)
         self.sigma = nn.Parameter(torch.zeros(actions_num, requires_grad=True, dtype=torch.float32), requires_grad=True)
@@ -72,12 +75,11 @@ class AWRNetwork(nn.Module):
     def forward(self, input_dict):
         is_train = input_dict.get('is_train', True)
         prev_actions = input_dict['prev_actions']
-        obs = self.norm_obs(input_dict['obs'])
-
-        out = obs
-        out = out = out.flatten(1)                
-        out = self.actor_mlp(out)
-        c_out = a_out = out
+        obs = self.norm_obs(input_dict['obs']).flatten(1)
+         
+        c_out = a_out = self.actor_mlp(obs)
+        if self.separate:
+            c_out = self.critic_mlp(obs)
         value = self.value(c_out)
 
         mu = self.mu(a_out)
