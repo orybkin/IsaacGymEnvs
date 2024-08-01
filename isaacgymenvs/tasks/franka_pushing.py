@@ -101,7 +101,7 @@ class FrankaPushing(VecTask):
 
         # modes 
         self.mode = self.cfg["env"].get("mode", '')
-        assert self.mode in ['', 'easy', 'grasping', 'close', 'onlygrasping']
+        assert self.mode in ['', 'easy', 'grasping', 'close', 'onlygrasping', 'onlygraspingeasy']
         self.distance_from_block = self.cfg["env"].get("distanceFromBlock", 0.0)
 
         self.achieved_idx = [14,15,16]
@@ -610,7 +610,7 @@ class FrankaPushing(VecTask):
             self.franka_dof_noise * 2.0 * (reset_noise - 0.5),
             self.franka_dof_lower_limits.unsqueeze(0), self.franka_dof_upper_limits)
         
-        if self.mode == 'easy':
+        if 'easy' in self.mode:
             # pos[:, :] = torch.tensor([ 0.0871,  0.5839, -0.0948, -2.5892, -0.1235,  3.4638,  0.9550,  0.0400, 0.0400], device=self.device)[None]
             x1 = torch.tensor([ 0.0871,  0.5839, -0.0948, -2.5892, -0.1235,  3.4638,  0.9550,  0.0400, 0.0400], device=self.device)
             x2 = torch.tensor([ 0.2171,  0.0121, -0.2010, -2.7235,  0.0092,  3.0235,  0.8217,  0.0400, 0.0400], device=self.device)
@@ -707,7 +707,7 @@ class FrankaPushing(VecTask):
 
         # Set z value, which is fixed height
         table_center[2] = table_center[2] + 0.15
-        if self.mode == 'easy':
+        if 'easy' in self.mode:
             table_center[2] = table_center[2] - 0.1
 
         # Initialize rotation, which is no rotation (quat w = 1)
@@ -856,7 +856,7 @@ class FrankaPushing(VecTask):
             # sampled_goal_state[:, 2] = center[2] + 0.14 * torch.rand(num_resets, device=self.device)
             sampled_goal_state[::2, 2] = center[2] + 0.14 * torch.rand(num_resets // 2, device=self.device)
 
-        if self.mode == 'onlygrasping':
+        if 'onlygrasping' in self.mode:
             sampled_goal_state[:, 2] = center[2] + 0.14 * torch.rand(num_resets, device=self.device)
 
         if self.test:
