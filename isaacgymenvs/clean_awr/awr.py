@@ -180,124 +180,14 @@ class AWRAgent():
     def get_values(self, obs):
         return self.run_model(obs)['values']
     
-    def run_model_in_slices(self, obs, actions, out_list, n_slices=None):
+    def run_td_in_slices(self, x, y,  n_slices=None):
         # Conserves memory
+        obs = torch.cat([x,y], dim=1)
         if n_slices is None: n_slices = min(16, obs.shape[0])
-
-        obs = obs.reshape([n_slices, -1] + list(obs.shape[1:]))
-        res_dicts = [self.run_model(dict(obs=obs[i].flatten(0, 1))) for i in range(n_slices)]
-        res_dict = {}
-        for k in res_dicts[0]:
-            if k in out_list:
-                res_dict[k] = torch.stack([d[k] for d in res_dicts], 0).reshape(self.config['horizon_length'], self.config['num_actors'], -1)
-        res_dict.pop('actions')
-        res_dict['neglogpacs'] = _neglogp(actions, res_dict['mus'], res_dict['sigmas'], torch.log(res_dict['sigmas']))
-                                                     
-        return res_dict
-
-    # def get_relabel_idx(self, env, dones):
-    #     # does 1 denote the end or the beginnig of the episode?
-    #     idx = dones # [0, 0, 1, 0, 0, 0, 1, 0, 0, 0]
-    #     present, first_idx = idx.max(0)
-    #     first_idx[present == 0] = self.config['horizon_length'] - 1
-    #     idx = idx.flip(0).cumsum(0).flip(0) # [2, 2, 2, 1, 1, 1, 1, 0, 0, 0]
-    #     idx = idx[[0]] - idx # [0, 0, 0, 1, 1, 1, 1, 2, 2, 2]
-    #     # Compute last frame id
-    #     ep_len = env.max_episode_length
-    #     idx = idx * ep_len + first_idx[None, :] 
-    #     idx = torch.minimum(idx, (dones.shape[0] - 1) * torch.ones([1], dtype=torch.int32, device=idx.device))[:, :, None]
-    #     idx = idx.repeat(1, 1, len(env.achieved_idx))
-    #     return idx
-
-    def get_relabel_idx(self, env, dones):
-        dones = dones.clone()
-        dones[-1] = 1 # for last episode, use last existing frame
-        next_done_idx = dones.shape[0] - 1 - dones.flip(0).cummax(0).indices.flip(0)
-        next_done_idx = next_done_idx[:, :, None].repeat(1, 1, len(env.achieved_idx))
-        return next_done_idx
-
-    def relabeling_strategy(self, dones):
-        relabel_every = self.config.get('relabel_every', dones.shape[0])
-        assert self.config['relabel_strategy'] in ['final', 'constant', 'uniform', 'geometric']
-
-        if self.config['relabel_strategy'] == 'final':
-            # By default, relabel with final state
-            return dones
-
-        if self.config['relabel_strategy'] == 'constant':
-            # Make relabeled episodes of length relabeled_every
-            dones[relabel_every-1::relabel_every] = 1
-            return dones
-
-        if self.config['relabel_strategy'] == 'uniform': 
-            # Uniform length up to relabeled_every
-            relabel_idx = torch.randint(0, relabel_every, (self.config['horizon_length'], self.config['num_actors']), device=self.device)
-            relabel_idx = relabel_idx.cumsum(0)
-            relabel_idx[relabel_idx >= dones.shape[0]] = dones.shape[0] - 1
-            dones.scatter_(0, relabel_idx, 1)
-            return dones
-        
-        if self.config['relabel_strategy'] == 'geometric':
-            # Geometric distribution with p ~ 1 / relabel_every
-            p = 1 / relabel_every
-            uniform = torch.rand((self.config['horizon_length'], self.config['num_actors']), device=self.device)
-            relabel_idx = torch.floor(torch.log(uniform) / math.log(1 - p)).int()
-            relabel_idx = relabel_idx.cumsum(0)
-            relabel_idx[relabel_idx >= dones.shape[0]] = dones.shape[0] - 1
-            dones.scatter_(0, relabel_idx, 1)
-            return dones
-
-    def relabel_batch(self, buffer):
-        env = self.vec_env.env
-        relabeled_buffer = copy.deepcopy(buffer)
-
-        relabeled_buffer.tensor_dict['dones'] = self.relabeling_strategy(relabeled_buffer.tensor_dict['dones'])
-        
-        # Relabel states
-        obs = relabeled_buffer.tensor_dict['obses']
-        idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
-        next_achieved = obs[..., env.achieved_idx]
-        # Set desired goal to achieved goal at a future state
-        onpolicy_desired = obs[:, :, env.desired_idx]
-        a = self.config['goal_interpolation']
-        next_desired = a * torch.gather(obs[:, :, env.achieved_idx], 0, idx) + (1 - a) * onpolicy_desired
-        obs[:, :, env.desired_idx] = next_desired
-
-        # res_dict = self.get_action_values(dict(obs=relabeled_buffer.tensor_dict['obses'].flatten(0, 1)))
-        res_dict = self.run_model_in_slices(obs, relabeled_buffer.tensor_dict['actions'], relabeled_buffer.tensor_dict.keys())
-        relabeled_buffer.tensor_dict.update(res_dict)
-
-        # Rewards should be shifted by one
-        last_obs = dict(obs=self.obs['obs'].clone())
-        last_obs['obs'][:, env.desired_idx] = a * obs[-1, :, env.desired_idx] + (1 - a) * onpolicy_desired[-1]
-        next_desired = torch.cat([next_desired[1:], last_obs['obs'][None, :, env.desired_idx]], 0)
-        next_achieved = torch.cat([next_achieved[1:], last_obs['obs'][None, :, env.achieved_idx]], 0)
-        next_obs = torch.cat([obs[1:], last_obs['obs'][None]], 0)
-        # Rewards
-        rewards = env.compute_reward_stateless({'goal_pos': next_desired, env.target_name: next_achieved,
-                                                'actions': relabeled_buffer.tensor_dict['actions'],
-                                                'obs': next_obs})[:, :, None]
-        rewards = rewards.to(self.device)
-        # (rewards == relabeled_buffer.tensor_dict['rewards']).sum() / 16 / 32768
-
-        # TODO there is something funny about this - why the multiply by gamma?
-        if self.config['value_bootstrap']:
-            rewards += self.config['gamma'] * relabeled_buffer.tensor_dict['values'] * relabeled_buffer.tensor_dict['dones'].unsqueeze(2).float()
-        relabeled_buffer.tensor_dict['rewards'] = rewards
-
-        # Compute returns
-        last_values = self.get_values(last_obs)
-        fdones = self.dones.float()
-        mb_fdones = relabeled_buffer.tensor_dict['dones'].float()
-        mb_values = relabeled_buffer.tensor_dict['values']
-        mb_rewards = relabeled_buffer.tensor_dict['rewards']
-        mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
-        mb_returns = mb_advs + mb_values
-        relabeled_batch = relabeled_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
-        relabeled_batch['returns'] = swap_and_flatten01(mb_returns)
-        relabeled_batch['played_frames'] = self.batch_size
-
-        return relabeled_buffer, relabeled_batch
+        obs = obs.reshape([n_slices, -1, obs.shape[1]])
+        distances = [self.temporal_distance(obs[i])[1] for i in range(n_slices)]
+        distances = torch.stack(distances, 0)                               
+        return distances
 
     def cast(self, x):
         if isinstance(x, torch.Tensor): return x
@@ -612,14 +502,14 @@ class AWRAgent():
             update_time_start = time.time()
             fixed_advantage_normalizer = None
             metrics = defaultdict(list)
-
+            
             temporal_distance_dataset = TemporalDistanceDataset(self.experience_buffer, self.config, self.vec_env.env)
 
             # ===============================
             # Train distance function
             # ===============================
 
-            for mini_ep in range(0, self.config['mini_epochs']):
+            for mini_ep in range(0, self.config['temporal_distance']['mini_epochs']):
                 for i in range(len(self.dataset)):
                     losses = self.temporal_distance.loss(temporal_distance_dataset[i])
                     losses['ce'].backward()
@@ -628,13 +518,17 @@ class AWRAgent():
                     for k, v in losses.items(): 
                         metrics[f'temporal_distance/{k}'].append(v)
 
-            # Relabel rewards with temporal distance
-            with torch.no_grad():
-                obs = self.experience_buffer.tensor_dict['obses']
-                _, td_rewards = self.temporal_distance(obs[:, :, self.vec_env.env.achieved_idx].flatten(0,1),obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
-                td_rewards = td_rewards.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
+            if self.config['relabel']:
+                # Relabel rewards with temporal distance
+                with torch.no_grad():
+                    obs = self.experience_buffer.tensor_dict['obses']
+                    distances = self.run_td_in_slices(obs[:, :, self.vec_env.env.achieved_idx].flatten(0,1),
+                                                    obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
+                    distances = distances.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
+                    td_rewards = - distances / self.config['relabel_every']
+                    mb_rewards = td_rewards
             
-            mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, td_rewards)
+            mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
             mb_returns = mb_advs + mb_values
             batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
             batch_dict['returns'] = swap_and_flatten01(mb_returns)

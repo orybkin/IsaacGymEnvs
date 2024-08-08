@@ -41,8 +41,11 @@ ig_fetchlike_config = ml_collections.ConfigDict({
     'relabel_strategy': 'final',
     'goal_interpolation': 1.,
     'onpolicy_coef': 1.,
+    'temporal_distance': {
+        'lr': 1e-3,
+        'mini_epochs': 5,
+    }
 })
-
 
 def get_config():
     return ig_fetchlike_config
