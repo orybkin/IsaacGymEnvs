@@ -22,7 +22,7 @@ import wandb
 from datetime import datetime
 
 from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, _neglogp
-from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork
+from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork, TemporalDistanceDataset
 from isaacgymenvs.clean_awr.awr_utils import AWRDataset, Diagnostics, ExperienceBuffer
 from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every
 import ml_collections
@@ -129,7 +129,7 @@ class AWRAgent():
         )
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
-        self.temporal_distance = TemporalDistanceNetwork(self.obs_shape, self.config['hidden_dims'], self.vec_env.env.achieved_idx)
+        self.temporal_distance = TemporalDistanceNetwork(self.config['hidden_dims'], self.vec_env.env.achieved_idx, self.config['relabel_every'])
         self.temporal_distance.to(self.device)
         self.temporal_distance_optimizer = optim.Adam(self.temporal_distance.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
         if self.config['normalize_value']:
@@ -360,7 +360,7 @@ class AWRAgent():
         self.mean_rewards = self.last_mean_rewards = -100500
         self.algo_observer.after_clear_stats()
 
-    def train_awr(self, original_dict, relabeled_dict):
+    def train_awr(self, original_dict):
         loss = [0, 0]
         loss_coef = [self.config.get('onpolicy_coef', 1.0), 1.0]
         rcc = self.config.get('relabeled_critic_coef', 1.0)
@@ -369,7 +369,7 @@ class AWRAgent():
         loss_actor_coef = [1.0, rac]
         losses_dict = {}
         diagnostics = {}
-        for i, input_dict in enumerate([original_dict, relabeled_dict]):
+        for i, input_dict in enumerate([original_dict]):
             if not self.config['relabel'] and i == 1: continue
             identifier = '' if i == 0 else '_relabeled'
 
@@ -443,8 +443,6 @@ class AWRAgent():
             nn.utils.clip_grad_norm_(self.model.parameters(), self.config['grad_norm'])
         self.optimizer.step()
         self.optimizer.zero_grad()
-
-        self.temporal_distance(original_dict)
 
         self.diagnostics.mini_batch(self, diagnostics)      
 
@@ -556,8 +554,6 @@ class AWRAgent():
             self.epoch_num += 1
             epoch_num = self.epoch_num
 
-
-
             # ===============================
             # Collect data by doing a rollout in the environment. Store in self.experience_buffer.
             # ===============================
@@ -610,49 +606,45 @@ class AWRAgent():
                 mb_fdones = self.experience_buffer.tensor_dict['dones'].float()
                 mb_values = self.experience_buffer.tensor_dict['values']
                 mb_rewards = self.experience_buffer.tensor_dict['rewards']
-                mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
-                mb_returns = mb_advs + mb_values
 
-                batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
-                batch_dict['returns'] = swap_and_flatten01(mb_returns)
-                batch_dict['played_frames'] = self.batch_size
-                batch_dict['step_time'] = step_time
-
+            self.curr_frames = self.batch_size
             play_time_end = time.time()
             update_time_start = time.time()
-            if self.config['relabel']:
-                self.set_eval()
-                relabeled_buffer, relabeled_batch = self.relabel_batch(self.experience_buffer)
-            self.set_train()
-            self.curr_frames = batch_dict.pop('played_frames')
+            fixed_advantage_normalizer = None
+            metrics = defaultdict(list)
 
-            if self.config['relabel'] and self.config['normalize_advantage_joint']:
-                returns = batch_dict['returns']
-                values = batch_dict['values']
-                advantages = returns - values
-                returns_relabel = relabeled_batch['returns']
-                values_relabel = relabeled_batch['values']
-                advantages_relabel = returns_relabel - values_relabel
-                advantages = torch.cat([advantages, advantages_relabel], 0)
-                advantages_mean = advantages.mean()
-                advantages_std = advantages.std()
-                fixed_advantage_normalizer = (advantages_mean, advantages_std)
-            else:
-                fixed_advantage_normalizer = None
+            temporal_distance_dataset = TemporalDistanceDataset(self.experience_buffer, self.config, self.vec_env.env)
+
+            # ===============================
+            # Train distance function
+            # ===============================
+
+            for mini_ep in range(0, self.config['mini_epochs']):
+                for i in range(len(self.dataset)):
+                    losses = self.temporal_distance.loss(temporal_distance_dataset[i])
+                    losses['ce'].backward()
+                    self.temporal_distance_optimizer.step()
+                    self.temporal_distance_optimizer.zero_grad()
+                    for k, v in losses.items(): 
+                        metrics[f'temporal_distance/{k}'].append(v)
+
+            # Relabel rewards with temporal distance
+            with torch.no_grad():
+                obs = self.experience_buffer.tensor_dict['obses']
+                _, td_rewards = self.temporal_distance(obs[:, :, self.vec_env.env.achieved_idx].flatten(0,1),obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
+                td_rewards = td_rewards.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
+            
+            mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, td_rewards)
+            mb_returns = mb_advs + mb_values
+            batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
+            batch_dict['returns'] = swap_and_flatten01(mb_returns)
+            batch_dict['step_time'] = step_time
 
             self.return_std = dict()
             self.prepare_dataset(batch_dict, self.dataset, fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='')
 
             kl_dataset = self.dataset
-            if self.config['relabel']:
-                self.set_eval()
-                self.prepare_dataset(relabeled_batch, self.relabeled_dataset, update_mov_avg=self.config['joint_value_norm'], fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='_relabeled', )
-                kl_dataset = self.relabeled_dataset
-                self.relabeled_dataset.shuffle()
-                self.set_train()
-            relabeled_minibatch = None
             self.algo_observer.after_steps()
-            metrics = defaultdict(list)
             ep_kls = []
 
             # ===============================
@@ -666,8 +658,7 @@ class AWRAgent():
                 # if self.relabel:
                 #     self.relabeled_dataset.shuffle()
                 for i in range(len(self.dataset)):
-                    relabeled_minibatch = self.relabeled_dataset[i] if self.config['relabel'] else None
-                    losses, kl, last_lr, lr_mul, cmu, csigma = self.train_awr(self.dataset[i], relabeled_minibatch)
+                    losses, kl, last_lr, lr_mul, cmu, csigma = self.train_awr(self.dataset[i])
                     for k, v in losses.items(): 
                         metrics[f'losses/{k}'].append(v)
                     ep_kls.append(kl)
