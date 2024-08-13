@@ -276,7 +276,7 @@ class VecTask(Env):
         self.obs_dict = {}
 
     def render_this_step(self):
-        if self.override_render:
+        if self.override_render and self.enable_camera_sensors:
             return True
         else:
             episode_n = self.control_steps // self.max_episode_length 
