@@ -3,6 +3,7 @@ from ml_collections import config_flags
 
 ig_fetchlike_config = ml_collections.ConfigDict({
     'experiment': '',
+    'wandb_entity': 'oleh-rybkin',
     'num_envs': 8192,
     'clip_observations': 5.0,
     'clip_actions': 1,
@@ -44,6 +45,11 @@ ig_fetchlike_config = ml_collections.ConfigDict({
     'temporal_distance': {
         'lr': 1e-3,
         'mini_epochs': 5,
+        'negative_pairs_frac': 1.,
+        'classifier_selection': 'mode',
+        'regression': False,
+        'regression_coef': 1,
+        'save_data': False
     }
 })
 

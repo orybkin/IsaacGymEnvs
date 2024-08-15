@@ -17,9 +17,9 @@ from tensorboardX import SummaryWriter
 from functools import partial
 
 import isaacgymenvs
-import os
 import wandb
 from datetime import datetime
+from pathlib import Path
 
 from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, _neglogp
 from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork, TemporalDistanceDataset
@@ -107,6 +107,7 @@ class AWRAgent():
         self.experiment_dir = os.path.join(self.train_dir, self.config['run_name'])
         self.nn_dir = os.path.join(self.experiment_dir, 'nn')
         self.summaries_dir = os.path.join(self.experiment_dir, 'summaries')
+        self.save_td_dir = os.path.join('data', 'temporal_distance', self.config['run_name'])
         os.makedirs(self.train_dir, exist_ok=True)
         os.makedirs(self.experiment_dir, exist_ok=True)
         os.makedirs(self.nn_dir, exist_ok=True)
@@ -129,7 +130,21 @@ class AWRAgent():
         )
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
-        self.temporal_distance = TemporalDistanceNetwork(self.config['hidden_dims'], self.vec_env.env.achieved_idx, self.config['relabel_every'])
+        
+        if not self.config['temporal_distance']['regression']:
+            self.temporal_distance = TemporalDistanceNetwork(
+                self.config['hidden_dims'], 
+                self.vec_env.env.achieved_idx, 
+                output_size=self.config['relabel_every'] + 1,
+                classifier_selection=self.config['temporal_distance']['classifier_selection'],
+            )
+        else:
+            self.temporal_distance = TemporalDistanceNetwork(
+                self.config['hidden_dims'], 
+                self.vec_env.env.achieved_idx, 
+                output_size=2,
+                regression_coef=self.config['temporal_distance']['regression_coef']
+            )
         self.temporal_distance.to(self.device)
         self.temporal_distance_optimizer = optim.Adam(self.temporal_distance.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
         if self.config['normalize_value']:
@@ -504,6 +519,12 @@ class AWRAgent():
             metrics = defaultdict(list)
             
             temporal_distance_dataset = TemporalDistanceDataset(self.experience_buffer, self.config, self.vec_env.env)
+            
+            if self.config['temporal_distance']['save_data']:
+                td_save_path = Path(self.save_td_dir) / f'{self.epoch_num}.npy'
+                td_save_path.parent.mkdir(parents=True, exist_ok=True)
+                td_save_dict = {k: v.detach().cpu().numpy() for k, v in temporal_distance_dataset.pairs.items()}
+                np.save(td_save_path, td_save_dict)
 
             # ===============================
             # Train distance function
@@ -512,7 +533,7 @@ class AWRAgent():
             for mini_ep in range(0, self.config['temporal_distance']['mini_epochs']):
                 for i in range(len(self.dataset)):
                     losses = self.temporal_distance.loss(temporal_distance_dataset[i])
-                    losses['ce'].backward()
+                    losses['loss'].backward()
                     self.temporal_distance_optimizer.step()
                     self.temporal_distance_optimizer.zero_grad()
                     for k, v in losses.items(): 
@@ -659,7 +680,7 @@ def main(_):
         env['sim'] = dict(env['sim'])
     wandb.init(
         project='taskmaster',
-        entity='oleh-rybkin',
+        entity=FLAGS.agent['wandb_entity'],
         group='Default',
         sync_tensorboard=True,
         id=run_name,
