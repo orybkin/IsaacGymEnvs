@@ -1,3 +1,4 @@
+# Run AWR inside container
 echo "$@"
 . /global/scratch/users/oleh/miniconda3/etc/profile.d/conda.sh
 conda activate cubes
