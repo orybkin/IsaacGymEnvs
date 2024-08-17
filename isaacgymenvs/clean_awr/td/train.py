@@ -8,22 +8,28 @@ Train a TemporalDistanceNetwork using data loaded from a previous run.
 """
 
 import isaacgym
-import isaacgymenvs
 
 import os
 import numpy as np
 import torch
 
+from rl_games.algos_torch import torch_ext
+from rl_games.common import env_configurations, vecenv
+
+import wandb
+from datetime import datetime
 from pathlib import Path
 from torch import optim
 from torch.utils.data import Dataset
 from ml_collections import config_flags
 from absl import app, flags
 
-from rl_games.common import env_configurations, vecenv
+from collections import defaultdict
+from tensorboardX import SummaryWriter
 
+import isaacgymenvs
 from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork
-from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every
+from isaacgymenvs.utils.rlgames_utils import RLGPUEnv
 
 
 class SimpleTemporalDistanceDataset(Dataset):
@@ -79,53 +85,74 @@ class TemporalDistanceTrainer:
         self.config = config
         self.vec_env = vecenv.create_vec_env('rlgpu', config['num_actors'])
         self.device = config['device']
-        if config['temporal_distance']['regression']:
-            self.model = TemporalDistanceNetwork(
-                config['hidden_dims'], 
-                self.vec_env.env.achieved_idx, 
-                output_size=2,
-                regression_coef=config['temporal_distance']['regression_coef']
-            ).to(self.device)
+        
+        self.train_dir = 'runs'
+        self.experiment_dir = os.path.join(self.train_dir, self.config['run_name'])
+        self.summaries_dir = os.path.join(self.experiment_dir, 'summaries')
+        os.makedirs(self.summaries_dir, exist_ok=True)
+        self.writer = SummaryWriter(self.summaries_dir)
+        
+        if not self.config['temporal_distance']['full_state']:
+            self.td_idx = self.vec_env.env.achieved_idx  
         else:
-            self.model = TemporalDistanceNetwork(
-                config['hidden_dims'], 
-                self.vec_env.env.achieved_idx, 
-                output_size=config['relabel_every'] + 1,
-                classifier_selection=config['temporal_distance']['classifier_selection']
-            ).to(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
+            self.td_idx = np.arange(self.vec_env.env.cfg['env']['numObservations'])
+        if not self.config['temporal_distance']['regression']:
+            td_output_size = max(self.config['relabel_every'], self.config['horizon_length']) + 1
+        else:
+            td_output_size = 1
+        kw = dict(
+            units=self.config['hidden_dims'], 
+            input_size=len(self.td_idx) + len(self.vec_env.env.achieved_idx),
+            output_size=td_output_size
+        )
+        if not self.config['temporal_distance']['regression']:
+            kw['classifier_selection'] = self.config['temporal_distance']['classifier_selection']
+        self.model = TemporalDistanceNetwork(**kw).to(self.device)
+        self.optimizer = optim.Adam(self.model.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
         self._load_data(load_path, load_every)
         
     def _load_data(self, load_path, load_every):
         all_data_dict = {}
         n_total_data = 0
+        print('negative examples labeled as:', self.config['relabel_every'])
         for filename in os.listdir(load_path):
             base, ext = os.path.splitext(filename)
             assert ext == '.npy'
             if int(base) % load_every == 0:
                 data = np.load(Path(load_path) / filename, allow_pickle=True).item()
                 data = {k: torch.tensor(v) for k, v in data.items()}
-                data['distance'] = data['distance'].long()
+                data['distance'] = torch.where(data['distance'] >= self.config['horizon_length'], self.config['relabel_every'], data['distance'])
                 all_data_dict[int(base)] = data
                 n_total_data += len(data['distance'])
-        print('Number of samples:', n_total_data)
-        
+        print('number of samples:', n_total_data)
         all_epochs = sorted(all_data_dict.keys())
         all_data = [all_data_dict[e] for e in all_epochs]
         self.dataset = SimpleTemporalDistanceDataset(self.config, all_data, all_epochs)
+        
+    def write_stats(self, metrics, epoch_num):
+        output_str = f'epoch: {epoch_num}'
+        for k, v in metrics.items():
+            if len(v) > 0:
+                v = torch_ext.mean_list(v).item()
+                self.writer.add_scalar(k, v, epoch_num)
+                output_str += f'\t{k} = {round(v, 4)}'
+        print(output_str)
 
     def train(self):
-        for i in range(len(self.dataset)):
-            for mini_ep in range(0, self.config['temporal_distance']['mini_epochs']):
-                for j in range(self.dataset.batch_length):
+        for epoch_num in range(1, len(self.dataset) + 1):
+            metrics = defaultdict(list)
+            for mini_ep in range(self.config['temporal_distance']['mini_epochs']):
+                for mb_num in range(self.dataset.batch_length):
                     self.optimizer.zero_grad()
-                    losses = self.model.loss({k: v.to(self.device) for k, v in self.dataset[i, j].items()})
-                    losses['loss'].backward()
+                    losses = self.model.loss({k: v.to(self.device) for k, v in self.dataset[epoch_num - 1, mb_num].items()})
+                    if not self.config['temporal_distance']['regression']:
+                        losses['ce'].backward()
+                    else:
+                        losses['mse'].backward()
                     self.optimizer.step()
-            print(f'Epoch {self.dataset.all_epochs[i]}:',
-                  'loss =', round(losses['loss'].item(), 4), 
-                  'accuracy =', round(losses['accuracy'].item(), 4))
-
+                    for k, v in losses.items():
+                        metrics[f'temporal_distance_indep/{k}'].append(v)
+            self.write_stats(metrics, epoch_num)
         
 def main(_):
     FLAGS = flags.FLAGS
@@ -154,15 +181,40 @@ def main(_):
         'env_creator': lambda **kwargs: create_isaacgym_env(**kwargs),
     })
     vecenv.register('RLGPU', lambda config_name, num_actors, **kwargs: RLGPUEnv(config_name, num_actors, **kwargs))
+    
+    time_str = datetime.now().strftime("%y%m%d-%H%M%S-%f")
+    if FLAGS.slurm_job_id != -1:
+        run_name = f"{FLAGS.slurm_job_id}_{FLAGS.agent['experiment']}"
+    else:
+        run_name = f"{time_str}_{FLAGS.agent['experiment']}"
+    FLAGS.agent['run_name'] = run_name
+
+    env = dict(FLAGS.env)
+    env['env'] = dict(env['env'])
+    if 'sim' in env:
+        env['sim'] = dict(env['sim'])
+    
+    wandb.init(
+        project='taskmaster',
+        entity=FLAGS.agent['wandb_entity'],
+        group='Default',
+        sync_tensorboard=True,
+        id=run_name,
+        name=run_name,
+        config={'agent': dict(FLAGS.agent), 'env': env, 'experiment': FLAGS.agent['experiment']},
+        # settings=wandb.Settings(start_method='fork'),
+    )
         
     trainer = TemporalDistanceTrainer(
         FLAGS.agent,
-        load_path='data/temporal_distance/240814-173913-470136_flc2_awr'
+        load_path='data/temporal_distance/240816-170206-826469_flc2_awr'
     )
     trainer.train()
     
     
 if __name__ == '__main__':
+    flags.DEFINE_integer('slurm_job_id', -1, '')
     config_flags.DEFINE_config_file('agent', 'clean_awr/agent_config/ig_push.py', 'Agent configuration.', lock_config=False)
     config_flags.DEFINE_config_file('env', 'clean_awr/env_config/ig_push.py', 'Env configuration.', lock_config=False)
     app.run(main)
+        

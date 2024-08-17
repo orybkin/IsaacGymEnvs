@@ -45,10 +45,10 @@ ig_fetchlike_config = ml_collections.ConfigDict({
     'temporal_distance': {
         'lr': 1e-3,
         'mini_epochs': 5,
+        'full_state': False,
         'negative_pairs_frac': 1.,
         'classifier_selection': 'mode',
         'regression': False,
-        'regression_coef': 1,
         'save_data': False
     }
 })

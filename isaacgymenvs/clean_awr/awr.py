@@ -131,22 +131,24 @@ class AWRAgent():
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
         
-        if not self.config['temporal_distance']['regression']:
-            self.temporal_distance = TemporalDistanceNetwork(
-                self.config['hidden_dims'], 
-                self.vec_env.env.achieved_idx, 
-                output_size=self.config['relabel_every'] + 1,
-                classifier_selection=self.config['temporal_distance']['classifier_selection'],
-            )
+        if not self.config['temporal_distance']['full_state']:
+            self.td_idx = self.vec_env.env.achieved_idx  
         else:
-            self.temporal_distance = TemporalDistanceNetwork(
-                self.config['hidden_dims'], 
-                self.vec_env.env.achieved_idx, 
-                output_size=2,
-                regression_coef=self.config['temporal_distance']['regression_coef']
-            )
-        self.temporal_distance.to(self.device)
+            self.td_idx = np.arange(self.vec_env.env.cfg['env']['numObservations'])
+        if not self.config['temporal_distance']['regression']:
+            td_output_size = max(self.config['relabel_every'], self.config['horizon_length']) + 1
+        else:
+            td_output_size = 1
+        kw = dict(
+            units=self.config['hidden_dims'], 
+            input_size=len(self.td_idx) + len(self.vec_env.env.achieved_idx),
+            output_size=td_output_size
+        )
+        if not self.config['temporal_distance']['regression']:
+            kw['classifier_selection'] = self.config['temporal_distance']['classifier_selection']
+        self.temporal_distance = TemporalDistanceNetwork(**kw).to(self.device)
         self.temporal_distance_optimizer = optim.Adam(self.temporal_distance.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
+        
         if self.config['normalize_value']:
             self.value_mean_std = self.model.value_mean_std
         self.dataset = AWRDataset(self.batch_size, self.minibatch_size, self.device)
@@ -195,13 +197,16 @@ class AWRAgent():
     def get_values(self, obs):
         return self.run_model(obs)['values']
     
-    def run_td_in_slices(self, x, y,  n_slices=None):
+    def run_td_in_slices(self, x, y, n_slices=None):
         # Conserves memory
         obs = torch.cat([x,y], dim=1)
         if n_slices is None: n_slices = min(16, obs.shape[0])
         obs = obs.reshape([n_slices, -1, obs.shape[1]])
-        distances = [self.temporal_distance(obs[i])[1] for i in range(n_slices)]
-        distances = torch.stack(distances, 0)                               
+        if not self.config['temporal_distance']['regression']:
+            distances = [self.temporal_distance(obs[i])[1] for i in range(n_slices)]
+        else:
+            distances = [self.temporal_distance(obs[i]) for i in range(n_slices)]
+        distances = torch.stack(distances, 0)
         return distances
 
     def cast(self, x):
@@ -519,8 +524,9 @@ class AWRAgent():
             metrics = defaultdict(list)
             
             temporal_distance_dataset = TemporalDistanceDataset(self.experience_buffer, self.config, self.vec_env.env)
-            
+
             if self.config['temporal_distance']['save_data']:
+                if self.epoch_num == 1: print('Saving TD data to:', self.save_td_dir)
                 td_save_path = Path(self.save_td_dir) / f'{self.epoch_num}.npy'
                 td_save_path.parent.mkdir(parents=True, exist_ok=True)
                 td_save_dict = {k: v.detach().cpu().numpy() for k, v in temporal_distance_dataset.pairs.items()}
@@ -533,19 +539,24 @@ class AWRAgent():
             for mini_ep in range(0, self.config['temporal_distance']['mini_epochs']):
                 for i in range(len(self.dataset)):
                     losses = self.temporal_distance.loss(temporal_distance_dataset[i])
-                    losses['loss'].backward()
+                    if not self.config['temporal_distance']['regression']:
+                        losses['ce'].backward()
+                    else:
+                        losses['mse'].backward()
                     self.temporal_distance_optimizer.step()
                     self.temporal_distance_optimizer.zero_grad()
                     for k, v in losses.items(): 
                         metrics[f'temporal_distance/{k}'].append(v)
+                # print('epoch', self.epoch_num, {k: round(v.item(), 4) for k, v in losses.items()})
 
             if self.config['relabel']:
                 # Relabel rewards with temporal distance
                 with torch.no_grad():
                     obs = self.experience_buffer.tensor_dict['obses']
-                    distances = self.run_td_in_slices(obs[:, :, self.vec_env.env.achieved_idx].flatten(0,1),
-                                                    obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
+                    distances = self.run_td_in_slices(obs[:, :, self.td_idx].flatten(0,1),
+                                                      obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
                     distances = distances.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
+                        
                     td_rewards = - distances / self.config['relabel_every']
                     mb_rewards = td_rewards
             
