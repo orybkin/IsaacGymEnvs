@@ -3,6 +3,7 @@ from rl_games.algos_torch import torch_ext
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from rl_games.algos_torch.d2rl import D2RLNet
 from rl_games.algos_torch.sac_helper import  SquashedNormal
@@ -849,27 +850,43 @@ class DiagGaussianActor(NetworkBuilder.BaseNetwork):
         # Modify to only return mu and std
         return dist
 
-
 class DoubleQCritic(NetworkBuilder.BaseNetwork):
-    """Critic network, employes double Q-learning."""
-    def __init__(self, output_dim, **mlp_args):
+    """Critic network, employs double Q-learning with categorical outputs."""
+    def __init__(self, output_dim, num_bins=100, v_min=-10, v_max=110, **mlp_args):
         super().__init__()
+        self.num_bins = num_bins
+        self.v_min = v_min
+        self.v_max = v_max
 
         self.Q1 = self._build_mlp(**mlp_args)
-        self.Q1 = nn.Sequential(*list(self.Q1.children()), nn.Linear(mlp_args['units'][-1], output_dim))
+        self.Q1 = nn.Sequential(*list(self.Q1.children()), nn.Linear(mlp_args['units'][-1], num_bins))
 
         self.Q2 = self._build_mlp(**mlp_args)
-        self.Q2 = nn.Sequential(*list(self.Q2.children()), nn.Linear(mlp_args['units'][-1], output_dim))
+        self.Q2 = nn.Sequential(*list(self.Q2.children()), nn.Linear(mlp_args['units'][-1], num_bins))
 
-    def forward(self, obs, action):
+        # Register buffer for bin centers
+        bin_width = (v_max - v_min) / num_bins
+        bin_centers = torch.linspace(v_min + bin_width / 2, v_max - bin_width / 2, num_bins)
+        self.register_buffer('bin_centers', bin_centers)
+
+    def predict(self, obs, action):
         assert obs.size(0) == action.size(0)
 
         obs_action = torch.cat([obs, action], dim=-1)
-        q1 = self.Q1(obs_action)
-        q2 = self.Q2(obs_action)
+        
+        q1_logits = self.Q1(obs_action)
+        q1_probs = F.softmax(q1_logits, dim=-1)
+        q1_value = (q1_probs * self.bin_centers).sum(dim=-1, keepdim=True)
 
-        return q1, q2
+        q2_logits = self.Q2(obs_action)
+        q2_probs = F.softmax(q2_logits, dim=-1)
+        q2_value = (q2_probs * self.bin_centers).sum(dim=-1, keepdim=True)
 
+        return (q1_logits, q1_value), (q2_logits, q2_value)
+    
+    def forward(self, obs, action):
+        return list(zip(*self.predict(obs, action)))[1]
+                    
 
 class SACBuilder(NetworkBuilder):
     def __init__(self, **kwargs):

@@ -10,6 +10,8 @@ from isaacgymenvs.sac import experience
 from isaacgymenvs.sac import validation_replay_buffer
 from isaacgymenvs.utils.rlgames_utils import Every, get_grad_norm, save_cmd
 
+from torch.distributions import Normal
+
 from rl_games.interfaces.base_algorithm import  BaseAlgorithm
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
@@ -305,6 +307,31 @@ class SACAgent(BaseAlgorithm):
         self.model.train()
 
     def update_critic(self, obs, action, reward, next_obs, not_done):
+        class HistogramLoss(nn.Module):
+            def __init__(self, v_min, v_max, num_bins, sigma_to_bin_ratio=0.75):
+                super().__init__()
+                self.v_min = v_min
+                self.v_max = v_max
+                self.num_bins = num_bins
+                self.bin_width = (v_max - v_min) / num_bins
+                self.sigma = sigma_to_bin_ratio * self.bin_width
+                
+                # Create bin edges
+                self.register_buffer('bin_edges', 
+                                    torch.linspace(v_min, v_max, num_bins + 1))
+                
+            def forward(self, logits, targets):
+                assert logits.shape[:-1] == targets.shape[:-1]
+                normal_dist = Normal(targets, self.sigma)
+                cdf_left = normal_dist.cdf(self.bin_edges[:-1])
+                cdf_right = normal_dist.cdf(self.bin_edges[1:])
+                target_probs = cdf_right - cdf_left
+                target_probs = target_probs / target_probs.sum(dim=-1, keepdim=True)
+                loss = F.cross_entropy(logits, target_probs)
+                return loss
+        hl_loss = HistogramLoss(-10, 110, 100)
+        hl_loss.to(self.device)
+
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
             with torch.no_grad():
                 dist = self.model.actor(next_obs)
@@ -320,10 +347,10 @@ class SACAgent(BaseAlgorithm):
                 target_Q = target_Q.detach()
 
             # get current Q estimates
-            current_Q1, current_Q2 = self.model.critic(obs, action)
+            (current_Q1_logits, current_Q1), (current_Q2_logits, current_Q2) = self.model.sac_network.critic.predict(obs, action)
 
-            critic1_loss = nn.MSELoss()(current_Q1, target_Q)
-            critic2_loss = nn.MSELoss()(current_Q2, target_Q)
+            critic1_loss = hl_loss(current_Q1_logits, target_Q)
+            critic2_loss = hl_loss(current_Q2_logits, target_Q)
         critic_loss = critic1_loss + critic2_loss 
 
         info = {'losses/c_loss': critic_loss.detach(),
