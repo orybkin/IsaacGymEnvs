@@ -207,7 +207,8 @@ def main(_):
         
     trainer = TemporalDistanceTrainer(
         FLAGS.agent,
-        load_path='data/temporal_distance/240816-170206-826469_flc2_awr'
+        # load_path='data/temporal_distance/240816-170206-826469_flc2_awr'
+        load_path='data/temporal_distance/240817-161724-059712_flc2_awr_td'
     )
     trainer.train()
     

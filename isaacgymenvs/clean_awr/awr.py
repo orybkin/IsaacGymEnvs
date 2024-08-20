@@ -24,6 +24,7 @@ from pathlib import Path
 from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, _neglogp
 from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork, TemporalDistanceDataset
 from isaacgymenvs.clean_awr.awr_utils import AWRDataset, Diagnostics, ExperienceBuffer
+from isaacgymenvs.clean_awr.viz.td import viz as td_viz
 from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every
 import ml_collections
 from ml_collections import config_flags
@@ -136,13 +137,13 @@ class AWRAgent():
         else:
             self.td_idx = np.arange(self.vec_env.env.cfg['env']['numObservations'])
         if not self.config['temporal_distance']['regression']:
-            td_output_size = max(self.config['relabel_every'], self.config['horizon_length']) + 1
+            self.td_output_size = max(self.config['relabel_every'], self.config['horizon_length']) + 1
         else:
-            td_output_size = 1
+            self.td_output_size = 1
         kw = dict(
             units=self.config['hidden_dims'], 
             input_size=len(self.td_idx) + len(self.vec_env.env.achieved_idx),
-            output_size=td_output_size
+            output_size=self.td_output_size
         )
         if not self.config['temporal_distance']['regression']:
             kw['classifier_selection'] = self.config['temporal_distance']['classifier_selection']
@@ -548,6 +549,9 @@ class AWRAgent():
                     for k, v in losses.items(): 
                         metrics[f'temporal_distance/{k}'].append(v)
                 # print('epoch', self.epoch_num, {k: round(v.item(), 4) for k, v in losses.items()})
+            
+            if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
+                wandb.log({'temporal_distance/viz': [wandb.Image(td_viz(self, grid_res=16))]})
 
             if self.config['relabel']:
                 # Relabel rewards with temporal distance

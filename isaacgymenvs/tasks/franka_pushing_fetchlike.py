@@ -520,8 +520,8 @@ class FrankaPushingFetchlike(VecTask):
         # Refresh states
         self._update_states()
 
-    def compute_observations(self):
-        self._refresh()
+    @property
+    def obs_keys(self):
         obs = ["eef_pos", "eef_quat", "goal_pos"]
         if self.observe_velocities:
             obs += ["eef_vel"]
@@ -530,11 +530,23 @@ class FrankaPushingFetchlike(VecTask):
             if self.observe_velocities:
                 obs += [f"cube{j}_angvel"]
         obs += ["q_gripper"] if self.control_type == "osc" else ["q"]
-        self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
+        return obs
 
-        maxs = {ob: torch.max(self.states[ob]).item() for ob in obs}
-
+    def compute_observations(self):
+        self._refresh()
+        self.obs_buf = torch.cat([self.states[ob] for ob in self.obs_keys], dim=-1)
+        maxs = {ob: torch.max(self.states[ob]).item() for ob in self.obs_keys}
         return self.obs_buf
+    
+    @property
+    def obs_buf_idx(self):
+        res = {}
+        idx = 0
+        for obs_key in self.obs_keys:
+            size = self.states[obs_key].shape[1]
+            res[obs_key] = (idx, idx+size)
+            idx += size
+        return res
     
     def _compute_pixel_obs_save(self):
         """Save images for debugging"""
