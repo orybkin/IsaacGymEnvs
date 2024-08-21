@@ -17,7 +17,7 @@ class TemporalDistanceNetwork(nn.Module):
         self.mlp = _build_sequential_mlp(input_size, units)
         
         if self.do_classification:
-            self.classifier_selection = classifier_selection
+            self.default_classifier_selection = classifier_selection
         self.mlp.add_module('linear', nn.Linear(units[-1], output_size))
 
         for m in self.modules():
@@ -25,24 +25,25 @@ class TemporalDistanceNetwork(nn.Module):
                 if getattr(m, "bias", None) is not None:
                     torch.nn.init.zeros_(m.bias)
     
-    def forward(self, *args):
+    def forward(self, *args, classifier_selection=None):
         out = torch.cat(args, dim=1)
         out = out.flatten(1)
         
         if self.do_classification:
             out = self.mlp(out)
-            if self.classifier_selection == 'mode':
+            if classifier_selection is None:
+                classifier_selection = self.default_classifier_selection
+            if classifier_selection == 'mode':
                 pred = torch.argmax(out, dim=1)
-            elif self.classifier_selection == 'mean':
+            elif classifier_selection == 'mean':
                 probs = F.softmax(out, dim=1)
                 pred = (torch.arange(self.output_size, device=out.device)[None, :] * probs).sum(dim=1)
-                pred = torch.round(pred).long()
             else:
                 raise ValueError()
             return out, pred
         else:
-            out = self.mlp(out)
-            return out
+            pred = self.mlp(out)
+            return pred
         
     def loss(self, pair):
         goal = pair['goal']
@@ -52,14 +53,16 @@ class TemporalDistanceNetwork(nn.Module):
         if self.do_classification:
             out, pred = self.forward(goal, future_goal)
             loss = F.cross_entropy(out, distance)
+            if pred.dtype == torch.float:  # classifier_selection == 'mean'
+                pred = torch.round(pred).long()
             accuracy = torch.mean((pred == distance).float())
-            return {'ce': loss, 'accuracy': accuracy}
+            return {'ce': loss, 'accuracy': accuracy, 'pred': pred}
         else:
             out = self.forward(goal, future_goal)
             loss = F.mse_loss(out, distance.unsqueeze(1).float())
             pred = torch.round(out).long()
             accuracy = torch.mean((pred == distance).float())
-            return {'mse': loss, 'accuracy': accuracy}
+            return {'mse': loss, 'accuracy': accuracy, 'pred': pred}
 
 
 class TemporalDistanceDataset(Dataset):

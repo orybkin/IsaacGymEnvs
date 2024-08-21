@@ -130,13 +130,10 @@ class TemporalDistanceTrainer:
         self.dataset = SimpleTemporalDistanceDataset(self.config, all_data, all_epochs)
         
     def write_stats(self, metrics, epoch_num):
-        output_str = f'epoch: {epoch_num}'
         for k, v in metrics.items():
             if len(v) > 0:
                 v = torch_ext.mean_list(v).item()
                 self.writer.add_scalar(k, v, epoch_num)
-                output_str += f'\t{k} = {round(v, 4)}'
-        print(output_str)
 
     def train(self):
         for epoch_num in range(1, len(self.dataset) + 1):
@@ -151,8 +148,15 @@ class TemporalDistanceTrainer:
                         losses['mse'].backward()
                     self.optimizer.step()
                     for k, v in losses.items():
-                        metrics[f'temporal_distance_indep/{k}'].append(v)
+                        if mini_ep == 0:
+                            metrics[f'temporal_distance/val_{k}'].append(v)
+                        if mini_ep == self.config['temporal_distance']['mini_epochs'] - 1:
+                            metrics[f'temporal_distance/{k}'].append(v)
             self.write_stats(metrics, epoch_num)
+            train_loss = torch_ext.mean_list(metrics['temporal_distance/ce']).item()
+            val_loss = torch_ext.mean_list(metrics['temporal_distance/val_ce']).item()
+            print(f'epoch: {epoch_num}  train loss: {round(train_loss, 4)}  val loss: {round(val_loss, 4)}')
+
         
 def main(_):
     FLAGS = flags.FLAGS
@@ -207,8 +211,8 @@ def main(_):
         
     trainer = TemporalDistanceTrainer(
         FLAGS.agent,
-        # load_path='data/temporal_distance/240816-170206-826469_flc2_awr'
-        load_path='data/temporal_distance/240817-161724-059712_flc2_awr_td'
+        load_path='data/temporal_distance/240816-170206-826469_flc2_awr'
+        # load_path='data/temporal_distance/240817-161724-059712_flc2_awr_td'
     )
     trainer.train()
     

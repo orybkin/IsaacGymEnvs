@@ -176,6 +176,8 @@ class FrankaPushingFetchlike(VecTask):
         # Set control limits
         self.cmd_limit = to_torch([0.1, 0.1, 0.1, 0.5, 0.5, 0.5], device=self.device).unsqueeze(0) if \
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
+        
+        self.success_key = "success_5"
 
         # Reset all environments
         self.reset_idx()
@@ -903,7 +905,7 @@ class FrankaPushingFetchlike(VecTask):
 
         metrics = dict()
         metrics["goal_dist"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1)
-        metrics["success_5"] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
+        metrics[self.success_key] = torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.04
         self.extras["episodic"] = metrics
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
         # self.extras["episode_cumulative"]["cubeA_vel"] = torch.norm(self.states["cubeA_vel"], dim=-1)
