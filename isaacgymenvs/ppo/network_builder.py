@@ -932,6 +932,7 @@ class SACBuilder(NetworkBuilder):
             }
             print("Building Actor")
             self.actor = self._build_actor(2*action_dim, self.log_std_bounds, **actor_mlp_args)
+            self.behavior_policy = self._build_actor(2*action_dim, self.log_std_bounds, **actor_mlp_args)
 
             if self.separate:
                 print("Building Critic")

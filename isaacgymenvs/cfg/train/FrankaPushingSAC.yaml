@@ -62,6 +62,7 @@ params:
 
     relabel_ratio: 0.0
     relabel_ratio_random: 0.2
+    sigma_to_bin_ratio: 3
 
     num_seed_steps: 5
     num_warmup_steps: 10

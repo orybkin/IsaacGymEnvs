@@ -1,2 +1,2 @@
 # Run PPO on login node
-printf "1%0.s\n" $(seq 1 $1) | xargs -t -I @ -P 5 sbatch --partition=savio4_gpu --account=co_rail --cpus-per-task=4 --gres=gpu:A5000:1 -t 50:00:00 --qos=rail_gpu4_normal --output=/global/home/users/oleh/slurm_logs/%j.log /global/scratch/users/oleh/taskmaster/isaacgymenvs/prun_node.sh "${@:2}"
+printf "1%0.s\n" $(seq 1 $1) | xargs -t -I @ -P 5 sbatch --partition=savio4_gpu --account=co_rail --cpus-per-task=4 --gres=gpu:A5000:1 -t 20:00:00 --qos=rail_gpu4_normal --output=/global/home/users/oleh/slurm_logs/%j.log /global/scratch/users/oleh/taskmaster/isaacgymenvs/prun_node.sh "${@:2}"

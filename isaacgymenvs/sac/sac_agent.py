@@ -117,6 +117,10 @@ class SACAgent(BaseAlgorithm):
         self.actor_optimizer = torch.optim.Adam(self.model.sac_network.actor.parameters(),
                                                 lr=float(self.config['actor_lr']),
                                                 betas=self.config.get("actor_betas", [0.9, 0.999]))
+    
+        self.behavior_policy_optimizer = torch.optim.Adam(self.model.sac_network.behavior_policy.parameters(), 
+                                                          lr=float(self.config['actor_lr']),
+                                                          betas=self.config.get("actor_betas", [0.9, 0.999]))
 
         self.critic_optimizer = torch.optim.Adam(self.model.sac_network.critic.parameters(),
                                                  lr=float(self.config["critic_lr"]),
@@ -329,7 +333,7 @@ class SACAgent(BaseAlgorithm):
                 target_probs = target_probs / target_probs.sum(dim=-1, keepdim=True)
                 loss = F.cross_entropy(logits, target_probs)
                 return loss
-        hl_loss = HistogramLoss(-10, 110, 100)
+        hl_loss = HistogramLoss(-10, 110, 100, self.config['sigma_to_bin_ratio'])
         hl_loss.to(self.device)
 
         with torch.cuda.amp.autocast(enabled=self.mixed_precision):
@@ -401,6 +405,24 @@ class SACAgent(BaseAlgorithm):
             info['info/actor_q_relabeled'] = actor_Q[real:].mean().detach()
 
         return actor_loss, info
+    
+
+    def update_behavior_policy(self, obs, action):
+
+        with torch.cuda.amp.autocast(enabled=self.mixed_precision):
+            action = action / self.action_scale
+            dist = self.model.sac_network.behavior_policy(obs)
+            log_prob = dist.log_prob(action.clamp(-0.99, 0.99)).sum(-1, keepdim=True)
+            loss = -log_prob.mean()
+
+        with torch.no_grad():    
+            dist2 = self.model.actor(obs)
+            kl = torch.distributions.kl.kl_divergence(dist, dist2).mean()
+        
+        info = {'losses/b_loss': loss.detach(), 
+               'info/behavior_kl': kl,}
+
+        return loss, info
 
     def soft_update_params(self, net, target_net, tau):
         for param, target_param in zip(net.parameters(), target_net.parameters()):
@@ -428,6 +450,12 @@ class SACAgent(BaseAlgorithm):
             self.actor_optimizer.zero_grad(set_to_none=True)
             actor_loss.backward()
             self.actor_optimizer.step()
+
+            behavior_policy_loss, behavior_policy_loss_info = self.update_behavior_policy(obs, action)
+            self.behavior_policy_optimizer.zero_grad(set_to_none=True)
+            behavior_policy_loss.backward()
+            self.behavior_policy_optimizer.step()
+            actor_loss_info.update(behavior_policy_loss_info)
 
             # Alpha
             if self.learnable_temperature:
