@@ -133,13 +133,11 @@ class AWRAgent():
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
         
         if not self.config['temporal_distance']['full_state']:
-            self.td_idx = self.vec_env.env.achieved_idx  
+            self.td_idx = self.vec_env.env.achieved_idx
         else:
-            self.td_idx = np.arange(self.vec_env.env.cfg['env']['numObservations'])
-        if not self.config['temporal_distance']['regression']:
-            self.td_output_size = max(self.config['relabel_every'], self.config['horizon_length']) + 1
-        else:
-            self.td_output_size = 1
+            self.td_idx = [i for i in range(self.vec_env.env.cfg['env']['numObservations']) if i not in self.vec_env.env.desired_idx]
+        self.max_pred = max(self.config['relabel_every'], self.config['horizon_length'])  # relabel_every should always be bigger
+        self.td_output_size = self.max_pred + 1 if not self.config['temporal_distance']['regression'] else 1
         kw = dict(
             units=self.config['hidden_dims'], 
             input_size=len(self.td_idx) + len(self.vec_env.env.achieved_idx),
@@ -541,6 +539,8 @@ class AWRAgent():
                 td_save_path.parent.mkdir(parents=True, exist_ok=True)
                 td_save_dict = {k: v.detach().cpu().numpy() for k, v in temporal_distance_dataset.pairs.items()}
                 np.save(td_save_path, td_save_dict)
+                
+            temporal_distance_dataset.pairs['goal'] = temporal_distance_dataset.pairs['goal'][:, self.td_idx]
 
             # ===============================
             # Train distance function
@@ -560,13 +560,15 @@ class AWRAgent():
                         for k in [loss_key, 'accuracy']:
                             metrics[f'temporal_distance/{k}'].append(losses[k])
                         if i == 0:  # selected arbitrarily
-                            td_hist_buffer = {'pred': losses['pred'], 'target': temporal_distance_dataset[i]['distance']}                    
+                            td_hist_buffer = {'pred': losses['pred'], 'target': temporal_distance_dataset[i]['distance']}
                 # print('epoch', self.epoch_num, {k: round(v.item(), 4) for k, v in losses.items()})
             
             if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
-                self.temporal_distance_viz.viz_all(success_buffer)
-                scatter_img = self.temporal_distance_viz.hist(td_hist_buffer['pred'], td_hist_buffer['target'])
-                wandb.log({'temporal_distance/state_desired_scatter': [scatter_img]})
+                self.temporal_distance_viz.viz_success(success_buffer)
+                self.temporal_distance_viz.hist(
+                    'temporal_distance/state_desired_scatter',
+                    td_hist_buffer['pred'].flatten(), 
+                    td_hist_buffer['target'].flatten())
 
             if self.config['relabel']:
                 # Relabel rewards with temporal distance
@@ -575,8 +577,7 @@ class AWRAgent():
                     distances = self.run_td_in_slices(obs[:, :, self.td_idx].flatten(0,1),
                                                       obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
                     distances = distances.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
-                    dist_hist = self.temporal_distance_viz.hist(distances.flatten())
-                    wandb.log({'temporal_distance/state_desired_hist': [dist_hist]})
+                    self.temporal_distance_viz.hist('temporal_distance/state_desired_hist', distances.flatten())
                         
                     td_rewards = - distances / self.config['relabel_every']
                     mb_rewards = td_rewards

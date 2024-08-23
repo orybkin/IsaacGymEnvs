@@ -8,6 +8,7 @@ import wandb
 from matplotlib import cm
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
+from typing import Dict
 
 from isaacgymenvs.clean_awr.viz.utils import add_cubes_to_viz
 
@@ -20,7 +21,7 @@ class TemporalDistanceVisualizer:
     
     @torch.no_grad()
     def _td_probs_sliced(self, x, y, n_slices=None, classifier_selection=None):
-        """From awr.py"""
+        """From awr.py; only handles classification"""
         obs = torch.cat([x, y], dim=1)
         if n_slices is None: n_slices = min(16, obs.shape[0])
         obs = obs.reshape([n_slices, -1, obs.shape[1]])
@@ -32,52 +33,62 @@ class TemporalDistanceVisualizer:
     def _get_obs(self):
         return self.agent.experience_buffer.tensor_dict['obses']
     
-    def hist(self, pred, target=None):
+    def hist(self, key, pred, target=None):
+        """Prediction/target distributions"""
         if target is None:
-            sns.histplot(data=pred.detach().cpu().numpy(), bins=self.agent.td_output_size)
+            sns.histplot(data=pred.detach().cpu().numpy(), bins=self.agent.max_pred+1)
             plt.gca().set_xlabel('pred')
-            plt.xlim(-1, self.agent.td_output_size)
+            plt.xlim(-1, self.agent.max_pred+1)
         else:
             target = target.detach().cpu().numpy()
             pred = pred.detach().cpu().numpy()
-            df = pd.DataFrame({'target': target, 'pred': pred})
-            df['counts'] = df.groupby(['target', 'pred'])['target'].transform('count')
-            j = sns.jointplot(x=target, y=pred, marginal_kws=dict(bins=np.arange(self.agent.td_output_size+1)-0.5))
-            j.ax_joint.cla()
-            sns.scatterplot(x='target', y='pred', data=df, hue='counts', palette='Blues', ax=j.ax_joint, legend=False)
-            j.ax_marg_x.set_xlim(-1, self.agent.td_output_size)
-            j.ax_marg_y.set_ylim(-1, self.agent.td_output_size)
+            j = sns.jointplot(x=target, y=pred, joint_kws=dict(alpha=0.15), marginal_kws=dict(bins=np.arange(self.agent.max_pred+2)-0.5))
+            j.ax_marg_x.set_xlim(-1, self.agent.max_pred+1)
+            j.ax_marg_y.set_ylim(-1, self.agent.max_pred+1)
             plt.gca().set(xlabel='target', ylabel='pred')
-        res = wandb.Image(plt.gcf())
+            if pred.dtype == np.int64:
+                df = pd.DataFrame({'target': target, 'pred': pred})
+                df['counts'] = df.groupby(['target', 'pred'])['target'].transform('count')
+                df['norm_counts'] = df.groupby('target')['counts'].transform(lambda x: x / x.max())
+                j.ax_joint.cla()
+                sns.scatterplot(x='target', y='pred', data=df, hue='norm_counts', palette='Blues', ax=j.ax_joint, legend=False)
+        wandb.log({key: [wandb.Image(plt.gcf())]})
         plt.close('all')
-        return res
     
     @torch.no_grad()
-    def successful_traj(self, success_buffer):
+    def _successful_traj(self, success_buffer, classifier_selection=None):
         obs = self._get_obs()
         env_num = success_buffer.float().argmax()
         traj = obs[:, env_num, :]
         initial_state = traj[0, self.agent.td_idx].repeat(obs.shape[0], 1)
-        achieved = traj[:, self.env.achieved_idx]
-        distances = self.agent.run_td_in_slices(initial_state, achieved)
-        distances = distances.flatten().cpu().numpy()
+        goal_state = traj[0, self.env.desired_idx].repeat(obs.shape[0], 1)
+        initial_distances = self.agent.run_td_in_slices(initial_state, traj[:, self.env.achieved_idx], classifier_selection=classifier_selection)
+        goal_distances = self.agent.run_td_in_slices(traj[:, self.agent.td_idx], goal_state, classifier_selection=classifier_selection)
+        initial_distances = initial_distances.flatten().cpu().numpy()
+        goal_distances = goal_distances.flatten().cpu().numpy()
         
-        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-        plt.scatter(np.arange(obs.shape[0]), distances, zorder=10)
-        ax.set_xlim(left=0)
-        ax.set_ylim(bottom=0)
-        xlim = ax.get_xlim()
-        ylim = ax.get_ylim()
-        start = max(xlim[0], ylim[0])
-        end = min(xlim[1], ylim[1])
-        plt.plot([start, end], [start, end], color='red', linestyle='--')
+        def do_plot(mode: str):
+            data = initial_distances if mode == 'initial' else goal_distances
+            fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+            plt.scatter(np.arange(obs.shape[0]), data, zorder=10)
+            start = -1
+            end = self.config['relabel_every']
+            ax.set_xlim(start, end)
+            ax.set_ylim(start, end)
+            if mode == 'initial':
+                plt.plot([start, end], [start, end], color='red', linestyle='--')
+            else:
+                plt.plot([0, obs.shape[0] - 1], [obs.shape[0] - 1, 0], color='red', linestyle='--')
+            return fig
         
-        res = wandb.Image(fig)
+        initial_res = wandb.Image(do_plot('initial'))
+        goal_res = wandb.Image(do_plot('goal'))
         plt.close('all')
-        return res
+        return {'initial': initial_res, 'goal': goal_res}
     
     @torch.no_grad()
-    def _goal_heatmap(self, traj, goal_pos, grid_obs, grid_res, bounds, plot_kw, classifier_selection):
+    def _goal_heatmap(self, traj, goal_pos, grid_obs, bounds, plot_kw, classifier_selection=None):
+        grid_res = grid_obs.shape[0]
         goal = goal_pos[None, :].repeat(grid_res**2, 1)
         distances = self.agent.run_td_in_slices(
             grid_obs[:, :, self.agent.td_idx].flatten(0, 1), 
@@ -86,7 +97,7 @@ class TemporalDistanceVisualizer:
         distances = distances.reshape(grid_res, grid_res).cpu().numpy()
         
         fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-        im = ax.imshow(np.flip(distances, axis=0), vmin=0, vmax=self.agent.td_output_size-1, **plot_kw)
+        im = ax.imshow(np.flip(distances, axis=0), vmin=0, vmax=self.agent.max_pred, **plot_kw)
         fig.colorbar(im, ax=ax)
         plt.plot(goal_pos[0].item(), goal_pos[1].item(), 'go', markersize=10)
         
@@ -105,7 +116,8 @@ class TemporalDistanceVisualizer:
         return img
         
     @torch.no_grad()
-    def _neg_prob_heatmap(self, obs, step_num, grid_obs, grid_res, plot_kw):
+    def _neg_prob_heatmap(self, obs, step_num, grid_obs, plot_kw):
+        grid_res = grid_obs.shape[0]
         env_num = np.random.randint(obs.shape[1])  # hopefully not same as env_num
         goal_pos = obs[step_num, env_num, self.env.desired_idx]
         goal = goal_pos[None, :].repeat(grid_res**2, 1)
@@ -124,9 +136,10 @@ class TemporalDistanceVisualizer:
         plt.close('all')
         return img
     
-    def heatmap(self, grid_res: int):
+    def heatmap(self, grid_res: int) -> Dict[str, wandb.Image]:
         """
-        Returns a dictionary {'goal': Image, 'neg': Image}
+        Classification: returns {'goal_mode': Image, 'goal_mean': Image, 'neg': Image}
+        Regression: returns {'goal': Image}
         
         goal: Samples a step and env from obs as a goal. Modifying x and y components
               (but leaving all else equal), make a heatmap with resulting distances.
@@ -147,15 +160,21 @@ class TemporalDistanceVisualizer:
         
         bounds = [-self.env.goal_position_noise, self.env.goal_position_noise]
         plot_kw = dict(cmap='Greys', interpolation='none', extent=[*bounds, *bounds])
-        img_goal_mode = self._goal_heatmap(traj, goal_pos, grid_obs, grid_res, bounds, plot_kw, classifier_selection='mode')
-        img_goal_mean = self._goal_heatmap(traj, goal_pos, grid_obs, grid_res, bounds, plot_kw, classifier_selection='mean')
-        img_neg = self._neg_prob_heatmap(obs, step_num, grid_obs, grid_res, plot_kw)
+
+        if not self.config['temporal_distance']['regression']:
+            img_goal_mode = self._goal_heatmap(traj, goal_pos, grid_obs, bounds, plot_kw, classifier_selection='mode')
+            img_goal_mean = self._goal_heatmap(traj, goal_pos, grid_obs, bounds, plot_kw, classifier_selection='mean')
+            img_neg = self._neg_prob_heatmap(obs, step_num, grid_obs, plot_kw)
+            res_dict = {'goal_mode': img_goal_mode, 'goal_mean': img_goal_mean, 'neg': img_neg}
+        else:
+            img_goal = self._goal_heatmap(traj, goal_pos, grid_obs, bounds, plot_kw)
+            res_dict = {'goal': img_goal}
         
-        res_dict = {'goal_mode': img_goal_mode, 'goal_mean': img_goal_mean, 'neg': img_neg}
         plt.close('all')
         return res_dict
     
-    def viz_all(self, success_buffer):
+    def viz_success(self, success_buffer):
+        """Heatmaps and trajectories"""
         obs = self._get_obs()
         pos = obs[:, :, self.env.achieved_idx]
         did_move = ~torch.all(torch.all(torch.isclose(pos, pos.flip(0)), dim=2), dim=0)
@@ -164,5 +183,7 @@ class TemporalDistanceVisualizer:
         for k, img in heatmap_dict.items():
             wandb.log({f'temporal_distance/{k}_viz': [img]})
         if torch.any(success_criterion):
-            img = self.successful_traj(success_criterion)
-            wandb.log({'temporal_distance/traj_viz': [img]})
+            for classifier_selection in ['mode', 'mean']:
+                traj_dict = self._successful_traj(success_criterion, classifier_selection)
+                for k, img in traj_dict.items():
+                    wandb.log({f'temporal_distance/traj_{k}_{classifier_selection}_viz': [img]})

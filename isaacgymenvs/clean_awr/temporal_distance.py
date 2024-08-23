@@ -45,6 +45,9 @@ class TemporalDistanceNetwork(nn.Module):
             pred = self.mlp(out)
             return pred
         
+    def _round(self, t):
+        return torch.round(t).long() if t.dtype == torch.float else t
+        
     def loss(self, pair):
         goal = pair['goal']
         future_goal = pair['future_goal']
@@ -53,15 +56,12 @@ class TemporalDistanceNetwork(nn.Module):
         if self.do_classification:
             out, pred = self.forward(goal, future_goal)
             loss = F.cross_entropy(out, distance)
-            if pred.dtype == torch.float:  # classifier_selection == 'mean'
-                pred = torch.round(pred).long()
-            accuracy = torch.mean((pred == distance).float())
+            accuracy = torch.mean((self._round(pred) == distance).float())
             return {'ce': loss, 'accuracy': accuracy, 'pred': pred}
         else:
-            out = self.forward(goal, future_goal)
-            loss = F.mse_loss(out, distance.unsqueeze(1).float())
-            pred = torch.round(out).long()
-            accuracy = torch.mean((pred == distance).float())
+            pred = self.forward(goal, future_goal)
+            loss = F.mse_loss(pred, distance.unsqueeze(1).float())
+            accuracy = torch.mean((self._round(pred) == distance).float())
             return {'mse': loss, 'accuracy': accuracy, 'pred': pred}
 
 
@@ -103,14 +103,13 @@ class TemporalDistanceDataset(Dataset):
         relabel_every = self.config.get('relabel_every', horizon)  # unused
         obs = buffer.tensor_dict['obses']
         dones = buffer.tensor_dict['dones']
-        td_idx = self.env.achieved_idx if not self.config['temporal_distance']['full_state'] else np.arange(obs.shape[-1])
         
         end_idx = self.get_relabel_idx(self.env, dones)[:, :, 0] # episode end indices
         distance = self._torch_randint(0, end_idx + 1, end_idx.shape)
         future_idx = self._torch_randint(distance, end_idx + 1, end_idx.shape)
         goal_idx = future_idx - distance
-        goal = torch.gather(obs[:, :, td_idx], 0, goal_idx[:,:,None].tile(len(td_idx)))
-        future_goal = torch.gather(obs[:, :, self.env.achieved_idx], 0, future_idx[:,:,None].tile(len(self.env.achieved_idx)))        
+        goal = torch.gather(obs, 0, goal_idx[:,:,None].tile(obs.shape[-1]))
+        future_goal = torch.gather(obs[:, :, self.env.achieved_idx], 0, future_idx[:,:,None].tile(len(self.env.achieved_idx)))
         
         return {'goal': goal, 'future_goal': future_goal, 'distance': distance}
 

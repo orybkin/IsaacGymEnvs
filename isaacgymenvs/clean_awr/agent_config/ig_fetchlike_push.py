@@ -50,7 +50,8 @@ ig_fetchlike_config = ml_collections.ConfigDict({
         'classifier_selection': 'mode',
         'regression': False,
         'plot_every': 50,
-        'save_data': False
+        'save_data': False,
+        'data_overwrite_lines': False
     }
 })
 
