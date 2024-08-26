@@ -418,9 +418,11 @@ class SACAgent(BaseAlgorithm):
         with torch.no_grad():    
             dist2 = self.model.actor(obs)
             kl = torch.distributions.kl.kl_divergence(dist, dist2).mean()
+            ce = dist2.log_prob(action.clamp(-0.99, 0.99)).sum(-1, keepdim=True).mean()
         
         info = {'losses/b_loss': loss.detach(), 
-               'info/behavior_kl': kl,}
+               'info/behavior_kl': kl,
+               'info/behavior_ce': ce,}
 
         return loss, info
 
