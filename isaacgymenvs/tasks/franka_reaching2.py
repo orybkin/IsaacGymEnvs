@@ -47,6 +47,7 @@ class FrankaReaching2(FrankaPushing):
         super().__init__(*args, **kwargs)
         self.achieved_idx = [0, 1, 2]
         self.target_name = 'eef_pos'
+        self.success_key = "success_4"
 
 
     def compute_reward_stateless(self, states):

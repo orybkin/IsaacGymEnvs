@@ -73,7 +73,7 @@ class TemporalDistanceDataset(Dataset):
         self.device = buffer.device
 
         # Build dataset
-        pairs = self.get_positive_pairs(buffer)
+        pairs = self.get_positive_pairs(buffer, self.config['temporal_distance']['goal_selection'])
         negative_pairs = {k: v.flip(1) for k,v in pairs.items()}  # TODO: sample randomly instead of flip
         negative_pairs['distance'][:] = max(config['relabel_every'], config['horizon_length'])
         pairs = {k: v.flatten(0, 1) for k,v in pairs.items()}
@@ -97,7 +97,8 @@ class TemporalDistanceDataset(Dataset):
     def _torch_randint(self, low, high, size):
         return torch.randint(2**63 - 1, size=size, device=self.device) % (high - low) + low
 
-    def get_positive_pairs(self, buffer):
+    def get_positive_pairs(self, buffer, goal_selection):
+        assert goal_selection in ('achieved', 'commanded')
         batch = self.config['num_actors']
         horizon = self.config['horizon_length']
         relabel_every = self.config.get('relabel_every', horizon)  # unused
@@ -109,7 +110,10 @@ class TemporalDistanceDataset(Dataset):
         future_idx = self._torch_randint(distance, end_idx + 1, end_idx.shape)
         goal_idx = future_idx - distance
         goal = torch.gather(obs, 0, goal_idx[:,:,None].tile(obs.shape[-1]))
-        future_goal = torch.gather(obs[:, :, self.env.achieved_idx], 0, future_idx[:,:,None].tile(len(self.env.achieved_idx)))
+        future_goal = torch.gather(
+            obs[:, :, self.env.achieved_idx if goal_selection == 'achieved' else self.env.desired_idx], 
+            0, 
+            future_idx[:,:,None].tile(len(self.env.achieved_idx)))
         
         return {'goal': goal, 'future_goal': future_goal, 'distance': distance}
 

@@ -1,7 +1,7 @@
 import ml_collections
 from ml_collections import config_flags
 
-ig_fetchlike_config = ml_collections.ConfigDict({
+ig_reaching2_config = ml_collections.ConfigDict({
     'experiment': '',
     'wandb_entity': 'oleh-rybkin',
     'num_envs': 8192,
@@ -11,9 +11,9 @@ ig_fetchlike_config = ml_collections.ConfigDict({
     'separate': False,
     'temperature': 0.2, # 0 for behavior cloning.
     'horizon_length': 32,
-    'num_minibatches': 32,
+    'num_minibatches': 16,
     'mini_epochs': 5,
-    'gamma': 0.95,
+    'gamma': 0.99,
     'tau': 0.95,
     'lr': 0.0005,
     'entropy_coef': 0.01,
@@ -57,4 +57,4 @@ ig_fetchlike_config = ml_collections.ConfigDict({
 })
 
 def get_config():
-    return ig_fetchlike_config
+    return ig_reaching2_config
