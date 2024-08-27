@@ -1,37 +1,23 @@
-# cd /global/scratch/users/prestonfu && singularity build --fakeroot taskmaster.sif taskmaster/isaacgymenvs/taskmaster5.def   
+# singularity build --fakeroot taskmaster.sif taskmaster4.def   
 # singularity shell --nv taskmaster.sif
-# This image is partially taken from the official isaac gym dockerfile and supports headless rendering
+# This is a cleaner image that uses external conda and supports headless rendering
 Bootstrap: docker
 From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
 
 %files
-    
-    ./IsaacGym_Preview_4_Package.tar.gz /home/IsaacGym_Preview_4_Package.tar.gz 
-    ./mujoco210-linux-x86_64.tar.gz /home/mujoco210-linux-x86_64.tar.gz
+    ./IsaacGym_Preview_4_Package.tar.gz /home/IsaacGym_Preview_4_Package.tar.gz
 
 # Container setup
 %post -c /bin/bash 
     export DEBIAN_FRONTEND=noninteractive 
     cd /home 
     tar -xvf IsaacGym_Preview_4_Package.tar.gz
-    tar -xvf mujoco210-linux-x86_64.tar.gz
-
-    apt update && apt-get install -y git vim
-    mkdir /tmp
 
     # dependencies for gym
     apt update && apt-get install -y --no-install-recommends \
         libxcursor-dev libxrandr-dev libxinerama-dev libxi-dev mesa-common-dev \
         zip unzip make gcc-8 g++-8 vulkan-utils mesa-vulkan-drivers pigz \
         git libegl1 git-lfs vulkan-tools
-
-    # dependencies for mujoco
-    apt update && apt-get install -y --no-install-recommends \
-        patchelf build-essential libssl-dev libffi-dev libxml2-dev libxslt1-dev \
-        zlib1g-dev libglew-dev libosmesa6-dev libgl1-mesa-glx libglfw3
-
-    # other
-    apt-get install libglib2.0-0 -y
 
     # Force gcc 8 to avoid CUDA 10 build issues on newer base OS 
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 8
@@ -47,8 +33,11 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
     export NVIDIA_VISIBLE_DEVICES=all 
     export NVIDIA_DRIVER_CAPABILITIES=all
 
+    apt install -y wget parallel vim git
+    # Other dependencies
+    apt-get install libglib2.0-0 -y
+
     # Install conda
-    # apt install -y wget parallel vim 
     # wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
     # bash Miniconda3-latest-Linux-x86_64.sh -b -p /home/miniconda3
     # export PATH="/home/miniconda3/bin:$PATH"
@@ -63,8 +52,16 @@ From: nvidia/cuda:11.8.0-cudnn8-devel-ubuntu20.04
     # cd ../..
 
     # Install taskmaster dependencies
-    mkdir -p /global/scratch/users/prestonfu/
-    cd /global/scratch/users/prestonfu/
-    GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" git clone https://github.com/orybkin/taskmaster.git
-    cd taskmaster
+    # mkdir -p /global/scratch/users/prestonfu/
+    # cd /global/scratch/users/prestonfu/
+    # GIT_SSH_COMMAND="ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no" git clone https://github.com/orybkin/taskmaster.git
+    # cd taskmaster
     # pip install -e .
+
+# %environment
+#     . /home/miniconda3/etc/profile.d/conda.sh
+#     conda activate cubes
+#     export LD_LIBRARY_PATH=/home/miniconda3/envs/cubes/lib/:$LD_LIBRARY_PATH
+#     cd /global/scratch/users/prestonfu/taskmaster
+#     pip install -e . 
+#     cd isaacgymenvs
