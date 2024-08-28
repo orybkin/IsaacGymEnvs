@@ -73,7 +73,7 @@ class TemporalDistanceDataset(Dataset):
         self.device = buffer.device
 
         # Build dataset
-        pairs = self.get_positive_pairs(buffer, self.config['temporal_distance']['goal_selection'])
+        pairs = self.get_positive_pairs(buffer, self.config['temporal_distance']['neg_goal_selection'])
         negative_pairs = {k: v.flip(1) for k,v in pairs.items()}  # TODO: sample randomly instead of flip
         negative_pairs['distance'][:] = max(config['relabel_every'], config['horizon_length'])
         pairs = {k: v.flatten(0, 1) for k,v in pairs.items()}

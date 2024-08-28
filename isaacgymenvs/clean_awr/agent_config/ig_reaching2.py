@@ -43,13 +43,14 @@ ig_reaching2_config = ml_collections.ConfigDict({
     'goal_interpolation': 1.,
     'onpolicy_coef': 1.,
     'temporal_distance': {
-        'goal_selection': 'achieved',
         'lr': 1e-3,
         'mini_epochs': 5,
         'full_state': False,
+        'neg_goal_selection': 'achieved',
         'negative_pairs_frac': 1.,
         'classifier_selection': 'mode',
         'regression': False,
+        'last_logit_rew': 0,
         'plot_every': 50,
         'save_data': False,
         'data_overwrite_lines': False

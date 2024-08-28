@@ -462,6 +462,7 @@ class AWRAgent():
         test_render_check = Every(math.ceil(self.vec_env.env.render_every_episodes / self.config['test_every_episodes']))
         test_counter = 0
         self.start_frame = self.frame
+        last_logit_label = self.config['temporal_distance']['last_logit_rew'] or self.config['relabel_every']
 
         while True:
             self.epoch_num += 1
@@ -577,8 +578,10 @@ class AWRAgent():
                     distances = self.run_td_in_slices(obs[:, :, self.td_idx].flatten(0,1),
                                                       obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
                     distances = distances.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
-                    self.temporal_distance_viz.hist('temporal_distance/state_desired_hist', distances.flatten())
-                        
+                    if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
+                        self.temporal_distance_viz.hist('temporal_distance/state_desired_hist', distances.flatten())
+                    
+                    distances = torch.where(distances == self.config['relabel_every'], last_logit_label, distances)
                     td_rewards = - distances / self.config['relabel_every']
                     mb_rewards = td_rewards
             
