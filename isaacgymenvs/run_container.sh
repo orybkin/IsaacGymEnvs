@@ -1,7 +1,8 @@
 echo "$@"
 . /global/scratch/users/prestonfu/miniconda3/etc/profile.d/conda.sh
-conda activate cubes
-export LD_LIBRARY_PATH=/global/scratch/users/prestonfu/miniconda3/envs/cubes/lib/:$LD_LIBRARY_PATH
+conda activate cubes2
+export LD_LIBRARY_PATH=/global/scratch/users/prestonfu/miniconda3/envs/cubes2/lib/:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/global/scratch/users/prestonfu/.mujoco/mujoco210/bin
 cd /global/scratch/users/prestonfu/taskmaster/isaacgymenvs
 DEVICE=$CUDA_VISIBLE_DEVICES
 unset CUDA_VISIBLE_DEVICES
