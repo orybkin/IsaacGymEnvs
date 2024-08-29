@@ -108,7 +108,6 @@ class TemporalDistanceTrainer:
             if int(base) % load_every == 0:
                 data = np.load(Path(load_path) / filename, allow_pickle=True).item()
                 data = {k: torch.tensor(v) for k, v in data.items()}
-                data['goal'] = data['goal'][:, self.agent.td_idx]
                 data['distance'] = torch.where(data['distance'] >= self.config['horizon_length'], self.config['relabel_every'], data['distance'])  # overwrite
                 all_data_dict[int(base)] = data
                 n_total_data += len(data['distance'])

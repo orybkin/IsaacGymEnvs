@@ -138,13 +138,18 @@ class AWRAgent():
             self.td_idx = [i for i in range(self.vec_env.env.cfg['env']['numObservations']) if i not in self.vec_env.env.desired_idx]
         self.max_pred = max(self.config['relabel_every'], self.config['horizon_length'])  # relabel_every should always be bigger
         self.td_output_size = self.max_pred + 1 if not self.config['temporal_distance']['regression'] else 1
+        assert len(self.vec_env.env.achieved_idx) == len(self.vec_env.env.desired_idx)
         kw = dict(
             units=self.config['hidden_dims'], 
             input_size=len(self.td_idx) + len(self.vec_env.env.achieved_idx),
-            output_size=self.td_output_size
+            output_size=self.td_output_size,
+            td_idx=self.td_idx,
+            achieved_idx=self.vec_env.env.achieved_idx,
         )
         if not self.config['temporal_distance']['regression']:
             kw['classifier_selection'] = self.config['temporal_distance']['classifier_selection']
+        if self.config['temporal_distance']['classifier_selection'] == 'logsumexp':
+            kw['logsumexp_alpha'] = self.config['temporal_distance']['logsumexp_alpha']
         self.temporal_distance = TemporalDistanceNetwork(**kw).to(self.device)
         self.temporal_distance_optimizer = optim.Adam(self.temporal_distance.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
         self.temporal_distance_viz = TemporalDistanceVisualizer(self)
@@ -541,8 +546,6 @@ class AWRAgent():
                 td_save_dict = {k: v.detach().cpu().numpy() for k, v in temporal_distance_dataset.pairs.items()}
                 np.save(td_save_path, td_save_dict)
                 
-            temporal_distance_dataset.pairs['goal'] = temporal_distance_dataset.pairs['goal'][:, self.td_idx]
-
             # ===============================
             # Train distance function
             # ===============================
@@ -558,7 +561,7 @@ class AWRAgent():
                         for k in [loss_key, 'accuracy']:
                             metrics[f'temporal_distance/val_{k}'].append(losses[k])
                     if mini_ep == self.config['temporal_distance']['mini_epochs'] - 1:
-                        for k in [loss_key, 'accuracy']:
+                        for k in [loss_key, 'accuracy', 'euclid_corr']:
                             metrics[f'temporal_distance/{k}'].append(losses[k])
                         if i == 0:  # selected arbitrarily
                             td_hist_buffer = {'pred': losses['pred'], 'target': temporal_distance_dataset[i]['distance']}
