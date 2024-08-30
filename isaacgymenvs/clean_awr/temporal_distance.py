@@ -51,12 +51,12 @@ class TemporalDistanceNetwork(nn.Module):
             elif classifier_selection == 'logsumexp':
                 log_probs = F.log_softmax(out, dim=1)
                 exp_term = -torch.arange(self.output_size, device=out.device) / self.logsumexp_alpha
-                pred = torch.logsumexp(log_probs + exp_term[None, :], dim=1)
+                pred = -self.logsumexp_alpha * torch.logsumexp(log_probs + exp_term[None, :], dim=1)
             else:
                 raise ValueError()
             return out, pred
         else:
-            pred = self.mlp(out)
+            pred = self.mlp(out).flatten()
             return pred
         
     def _round(self, t):
@@ -74,7 +74,7 @@ class TemporalDistanceNetwork(nn.Module):
             res_dict = {'ce': loss}
         else:
             pred = self.forward(goal, future_goal)
-            loss = F.mse_loss(pred, target.unsqueeze(1).float())
+            loss = F.mse_loss(pred, target.float())
             res_dict = {'mse': loss}
         accuracy = torch.mean((self._round(pred) == target).float())
         euclid_corr = torch.corrcoef(torch.stack([pred, euclidean]))[0, 1]
