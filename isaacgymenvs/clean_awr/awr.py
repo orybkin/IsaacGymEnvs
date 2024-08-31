@@ -468,8 +468,9 @@ class AWRAgent():
         test_counter = 0
         self.start_frame = self.frame
         last_logit_label = self.config['temporal_distance']['last_logit_rew'] or self.config['relabel_every']
+        max_epochs = self.config['max_epochs']
 
-        while True:
+        while self.epoch_num < max_epochs:
             self.epoch_num += 1
             epoch_num = self.epoch_num
 
@@ -536,6 +537,7 @@ class AWRAgent():
             fixed_advantage_normalizer = None
             metrics = defaultdict(list)
             td_hist_buffer = {}
+            euclid_buffer = {}
             
             temporal_distance_dataset = TemporalDistanceDataset(self.experience_buffer, self.config, self.vec_env.env)
 
@@ -557,14 +559,13 @@ class AWRAgent():
                     losses[loss_key].backward()
                     self.temporal_distance_optimizer.step()
                     self.temporal_distance_optimizer.zero_grad()
-                    if mini_ep == 0:
-                        for k in [loss_key, 'accuracy']:
-                            metrics[f'temporal_distance/val_{k}'].append(losses[k])
-                    if mini_ep == self.config['temporal_distance']['mini_epochs'] - 1:
+                    if mini_ep in (0, self.config['temporal_distance']['mini_epochs'] - 1):
+                        phase = '' if mini_ep == 0 else 'val_'
                         for k in [loss_key, 'accuracy', 'euclid_corr']:
-                            metrics[f'temporal_distance/{k}'].append(losses[k])
-                        if i == 0:  # selected arbitrarily
+                            metrics[f'temporal_distance/{phase}{k}'].append(losses[k])
+                        if mini_ep > 0 and i == 0:  # selected arbitrarily
                             td_hist_buffer = {'pred': losses['pred'], 'target': temporal_distance_dataset[i]['distance']}
+                            euclid_buffer = {'pred': losses['pred'], 'euclidean': losses['euclidean']}
                 # print('epoch', self.epoch_num, {k: round(v.item(), 4) for k, v in losses.items()})
             
             if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
@@ -573,6 +574,12 @@ class AWRAgent():
                     'temporal_distance/state_desired_scatter',
                     td_hist_buffer['pred'].flatten(), 
                     td_hist_buffer['target'].flatten())
+                self.temporal_distance_viz.simple_scatter(
+                    'temporal_distance/euclidean_scatter',
+                    euclid_buffer['pred'],
+                    euclid_buffer['euclidean'],
+                    xlabel='pred',
+                    ylabel='euclidean')
 
             if self.config['relabel']:
                 # Relabel rewards with temporal distance
@@ -653,7 +660,6 @@ class AWRAgent():
 
                 step_time = max(step_time, 1e-9)
                 fps_total = self.frame / total_time
-                max_epochs = self.config['max_epochs']
                 ep_str = f'/{max_epochs:.0f}' if max_epochs != -1 else ''
                 print(f'rewards: {mean_rewards[0]:.3f} fps total: {fps_total:.0f} epoch: {epoch_num:.0f}{ep_str} frames:', self.frame)
 

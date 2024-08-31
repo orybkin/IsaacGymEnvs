@@ -54,6 +54,14 @@ class TemporalDistanceVisualizer:
                 sns.scatterplot(x='target', y='pred', data=df, hue='norm_counts', palette='Blues', ax=j.ax_joint, legend=False)
         wandb.log({key: [wandb.Image(plt.gcf())]})
         plt.close('all')
+        
+    def simple_scatter(self, key, x, y, xlabel='', ylabel=''):
+        x = x.detach().cpu().numpy()
+        y = y.detach().cpu().numpy()
+        plt.scatter(x, y, alpha=0.05)
+        plt.gca().set(xlabel=xlabel, ylabel=ylabel)
+        wandb.log({key: [wandb.Image(plt.gcf())]})
+        plt.close('all')
     
     @torch.no_grad()
     def _successful_traj(self, success_buffer, classifier_selection=None):

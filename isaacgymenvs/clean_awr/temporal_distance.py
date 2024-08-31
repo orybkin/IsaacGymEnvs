@@ -78,7 +78,7 @@ class TemporalDistanceNetwork(nn.Module):
             res_dict = {'mse': loss}
         accuracy = torch.mean((self._round(pred) == target).float())
         euclid_corr = torch.corrcoef(torch.stack([pred, euclidean]))[0, 1]
-        return {**res_dict, 'accuracy': accuracy, 'euclid_corr': euclid_corr, 'pred': pred}
+        return {**res_dict, 'accuracy': accuracy, 'euclid_corr': euclid_corr, 'pred': pred, 'euclidean': euclidean}
 
 
 class TemporalDistanceDataset(Dataset):
