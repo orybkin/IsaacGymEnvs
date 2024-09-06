@@ -12,6 +12,7 @@ import isaacgym
 import os
 import numpy as np
 import torch
+import torch.nn as nn
 
 from rl_games.algos_torch import torch_ext
 from rl_games.common import env_configurations, vecenv
@@ -30,19 +31,18 @@ from tensorboardX import SummaryWriter
 
 import isaacgymenvs
 from isaacgymenvs.clean_awr.awr import AWRAgent
-from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork
-from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver
+from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork, TemporalDistanceDataset
+from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, get_grad_norm
+
 
 class SimpleTemporalDistanceDataset(Dataset):
-    def __init__(self, config, all_data, all_epochs):
-        self.all_data = all_data
-        self.all_epochs = all_epochs
-        self.batch_size = all_data[0]['goal'].shape[0]
-        self.minibatch_size = config['horizon_length'] * config['num_actors'] // config['num_minibatches']
-        self.length = len(all_data)
-        self.batch_length = self.batch_size // self.minibatch_size
+    def __init__(self, config, data):
+        self.config = config
+        self.data = data
+        self.batch_size = data['goal'].shape[0]
+        self.num_minibatches = config['num_minibatches']
+        self.minibatch_size = self.batch_size // self.num_minibatches
         self.device = config['device']
-        self.last_batch = None
         self.idx = None
         
     def _regenerate_idx(self):
@@ -51,81 +51,53 @@ class SimpleTemporalDistanceDataset(Dataset):
     def __len__(self):
         return self.length
     
-    def __getitem__(self, key):
-        if isinstance(key, int):
-            self.last_batch = key
-            self._regenerate_idx()
-            return {k: v[self.idx] for k, v in self.all_data[key].items()}
-        
-        elif isinstance(key, tuple):
-            assert len(key) == 2
-            batch_num, minibatch_num = key
-            if batch_num != self.last_batch:
-                self.last_batch = batch_num
-                self._regenerate_idx()
-        
-            start = minibatch_num * self.minibatch_size
-            end = (minibatch_num + 1) * self.minibatch_size
-            self.last_range = (start, end)
-            input_dict = {}
-            for k, v in self.all_data[batch_num].items():
-                if v is not None:
-                    if type(v) is dict:
-                        v_dict = {kd: vd[self.idx[start:end]] for kd, vd in v.items()}
-                        input_dict[k] = v_dict
-                    else:
-                        input_dict[k] = v[self.idx[start:end]]
-            return input_dict
-        
-        else:
-            raise ValueError()
+    def __getitem__(self, minibatch_num):
+        start_idx = minibatch_num * self.minibatch_size
+        end_idx = (minibatch_num + 1) * self.minibatch_size
+        return {k: v[self.idx[start_idx:end_idx]] for k, v in self.data.items()}
             
 
 class TemporalDistanceTrainer:
-    def __init__(self, agent, load_path, load_every=1):
+    def __init__(self, agent, load_path):
         self.agent = agent
         self.config = agent.config
         self.env = agent.vec_env.env
         self.device = agent.config['device']
         self.writer = SummaryWriter(self.agent.summaries_dir)
         self.log_key = 'temporal_distance_indep'
-        
+        self.load_path = load_path
+        self.dataset = None
         self.model = self.agent.temporal_distance
         self.optimizer = self.agent.temporal_distance_optimizer
         self.visualizer = self.agent.temporal_distance_viz
-        self._load_data(load_path, load_every)
+        self.epoch_nums = self._get_sorted_epochs()
+        
+    def _get_sorted_epochs(self):
+        print('negative examples labeled as:', self.config['relabel_every'])
+        print('loading from:', self.load_path)
+        sorted_epochs = []
+        for filename in os.listdir(self.load_path):
+            base, ext = os.path.splitext(filename)
+            assert ext == '.npy'
+            sorted_epochs.append(int(base))
+        return sorted(sorted_epochs)
+    
+    def _write_data(self, epoch_num):
+        data = np.load(Path(self.load_path) / f'{epoch_num}.npy', allow_pickle=True).item()
+        data = {k: torch.tensor(v) for k, v in data.items()}
+        data['distance'] = torch.where(data['distance'] >= self.config['horizon_length'], self.config['relabel_every'], data['distance'])  # overwrite
+        self.dataset = SimpleTemporalDistanceDataset(self.config, data)
         if self.config['temporal_distance']['data_overwrite_lines']:
             self._data_overwrite_lines()
         
-    def _load_data(self, load_path, load_every):
-        all_data_dict = {}
-        n_total_data = 0
-        print('negative examples labeled as:', self.config['relabel_every'])
-        print('loading from:', load_path)
-        for filename in tqdm(os.listdir(load_path)):
-            base, ext = os.path.splitext(filename)
-            assert ext == '.npy'
-            if int(base) % load_every == 0:
-                data = np.load(Path(load_path) / filename, allow_pickle=True).item()
-                data = {k: torch.tensor(v) for k, v in data.items()}
-                data['distance'] = torch.where(data['distance'] >= self.config['horizon_length'], self.config['relabel_every'], data['distance'])  # overwrite
-                all_data_dict[int(base)] = data
-                n_total_data += len(data['distance'])
-        print('number of samples:', n_total_data)
-        all_epochs = sorted(all_data_dict.keys())
-        all_data = [all_data_dict[e] for e in all_epochs]
-        self.dataset = SimpleTemporalDistanceDataset(self.config, all_data, all_epochs)
-        
-    def _data_overwrite_lines(self):
+    def _data_overwrite_lines(self, data):
         bound = self.env.goal_position_noise
         velocity = bound / self.config['horizon_length']
-        for i in range(len(self.dataset)):
-            batch = self.dataset.all_data[i]
-            random_vecs = torch.randn(self.dataset.batch_size, 2)
-            random_vel_vecs = velocity * random_vecs / ((random_vecs**2).sum(dim=1, keepdim=True))**0.5
-            random_pos = bound * (2 * torch.rand(self.dataset.batch_size, 2) - 1)
-            new_future_goal = batch['goal'][:, self.env.achieved_idx[:2]] + random_vel_vecs * batch['distance'][:, None]
-            batch['future_goal'][:, :2] = torch.where(batch['distance'][:, None] == self.config['relabel_every'], random_pos, new_future_goal)
+        random_vecs = torch.randn(self.dataset.batch_size, 2)
+        random_vel_vecs = velocity * random_vecs / ((random_vecs**2).sum(dim=1, keepdim=True))**0.5
+        random_pos = bound * (2 * torch.rand(self.dataset.batch_size, 2) - 1)
+        new_future_goal = self.dataset['goal'][:, self.env.achieved_idx[:2]] + random_vel_vecs * data['distance'][:, None]
+        data['future_goal'][:, :2] = torch.where(data['distance'][:, None] == self.config['relabel_every'], random_pos, new_future_goal)
         
     def write_stats(self, metrics, epoch_num):
         for k, v in metrics.items():
@@ -135,23 +107,29 @@ class TemporalDistanceTrainer:
 
     def train(self):
         loss_key = 'ce' if not self.config['temporal_distance']['regression'] else 'mse'
-        for epoch_num in range(1, len(self.dataset) + 1):
+        for epoch_num in self.epoch_nums:
+            self._write_data(epoch_num)
             metrics = defaultdict(list)
             td_hist_buffer = {}
             for mini_ep in range(self.config['temporal_distance']['mini_epochs']):
-                for mb_num in range(self.dataset.batch_length):
-                    losses = self.model.loss({k: v.to(self.device) for k, v in self.dataset[epoch_num - 1, mb_num].items()})
+                self.dataset._regenerate_idx()
+                for mb_num in range(self.dataset.num_minibatches):
+                    losses = self.model.loss({k: v.to(self.device) for k, v in self.dataset[mb_num].items()})
                     losses[loss_key].backward()
+                    grad_norm = get_grad_norm(self.model.parameters()).detach()
+                    if self.config['temporal_distance']['truncate_grads']:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.config['temporal_distance']['grad_norm'])
                     self.optimizer.step()
                     self.optimizer.zero_grad()
-                    if mini_ep == 0:
+                    
+                    metrics[f'{self.log_key}/grad_norm'].append(grad_norm)
+                    if mini_ep in (0, self.config['temporal_distance']['mini_epochs'] - 1):
+                        phase = 'val_' if mini_ep == 0 else ''
                         for k in [loss_key, 'accuracy']:
-                            metrics[f'{self.log_key}/val_{k}'].append(losses[k])
-                    if mini_ep == self.config['temporal_distance']['mini_epochs'] - 1:
-                        for k in [loss_key, 'accuracy']:
-                            metrics[f'{self.log_key}/{k}'].append(losses[k])
-                        if mb_num == 0:  # selected arbitrarily
-                            td_hist_buffer = {'pred': losses['pred'], 'target': self.dataset[epoch_num - 1, mb_num]['distance']}
+                            metrics[f'{self.log_key}/{phase}{k}'].append(losses[k])
+                        if mini_ep > 0 and mb_num == 0:  # selected arbitrarily
+                            td_hist_buffer = {'pred': losses['pred'], 'target': self.dataset[mb_num]['distance']}
+                            
             self.write_stats(metrics, epoch_num)
             train_loss = torch_ext.mean_list(metrics[f'{self.log_key}/{loss_key}']).item()
             val_loss = torch_ext.mean_list(metrics[f'{self.log_key}/val_{loss_key}']).item()
@@ -219,8 +197,9 @@ def main(_):
     agent = AWRAgent(FLAGS.agent, RLGPUAlgoObserver(run_name))
     trainer = TemporalDistanceTrainer(
         agent,
-        load_path='data/temporal_distance/240822-120009-887109_flc2_awr_mini3'
+        # load_path='data/temporal_distance/240822-120009-887109_flc2_awr_mini3'
         # load_path='data/temporal_distance/240817-161724-059712_flc2_awr_td'
+        load_path='data/temporal_distance/240903-204422-325287_flc2_awr_td_mini3_lr2e-3_b64_lse1'
     )
     trainer.train()
     

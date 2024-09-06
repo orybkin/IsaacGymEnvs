@@ -49,11 +49,14 @@ ig_fetchlike_config = ml_collections.ConfigDict({
         'neg_goal_selection': 'achieved',
         'negative_pairs_frac': 1.,
         'classifier_selection': 'mode',
+        'logsumexp_alpha': 1.,
         'regression': False,
         'last_logit_rew': 0,
         'plot_every': 50,
         'save_data': False,
-        'data_overwrite_lines': False
+        'data_overwrite_lines': False,
+        'truncate_grads': False,
+        'grad_norm': 1.
     }
 })
 

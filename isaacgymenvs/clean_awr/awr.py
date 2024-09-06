@@ -25,7 +25,7 @@ from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, _neglogp
 from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork, TemporalDistanceDataset
 from isaacgymenvs.clean_awr.awr_utils import AWRDataset, Diagnostics, ExperienceBuffer
 from isaacgymenvs.clean_awr.viz.td import TemporalDistanceVisualizer
-from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every
+from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every, get_grad_norm
 import ml_collections
 from ml_collections import config_flags
 from absl import app, flags
@@ -557,10 +557,15 @@ class AWRAgent():
                     losses = self.temporal_distance.loss(temporal_distance_dataset[i])
                     loss_key = 'ce' if not self.config['temporal_distance']['regression'] else 'mse'
                     losses[loss_key].backward()
+                    grad_norm = get_grad_norm(self.model.parameters()).detach()
+                    if self.config['temporal_distance']['truncate_grads']:
+                        nn.utils.clip_grad_norm_(self.model.parameters(), self.config['temporal_distance']['grad_norm'])
                     self.temporal_distance_optimizer.step()
                     self.temporal_distance_optimizer.zero_grad()
+                    
+                    metrics['temporal_distance/grad_norm'].append(grad_norm)
                     if mini_ep in (0, self.config['temporal_distance']['mini_epochs'] - 1):
-                        phase = '' if mini_ep == 0 else 'val_'
+                        phase = 'val_' if mini_ep == 0 else ''
                         for k in [loss_key, 'accuracy', 'euclid_corr']:
                             metrics[f'temporal_distance/{phase}{k}'].append(losses[k])
                         if mini_ep > 0 and i == 0:  # selected arbitrarily
