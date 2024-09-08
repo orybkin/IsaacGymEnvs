@@ -43,6 +43,7 @@ ig_fetchlike_config = ml_collections.ConfigDict({
     'goal_interpolation': 1.,
     'onpolicy_coef': 1.,
     'temporal_distance': {
+        'objective': 'temporal',
         'lr': 1e-3,
         'mini_epochs': 5,
         'full_state': False,

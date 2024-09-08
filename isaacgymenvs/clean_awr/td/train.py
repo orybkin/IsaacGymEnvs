@@ -119,6 +119,8 @@ class TemporalDistanceTrainer:
                     grad_norm = get_grad_norm(self.model.parameters()).detach()
                     if self.config['temporal_distance']['truncate_grads']:
                         nn.utils.clip_grad_norm_(self.model.parameters(), self.config['temporal_distance']['grad_norm'])
+                        grad_clip_frac = (grad_norm > self.config['temporal_distance']['grad_norm']).float()
+                        breakpoint()
                     self.optimizer.step()
                     self.optimizer.zero_grad()
                     
@@ -199,7 +201,8 @@ def main(_):
         agent,
         # load_path='data/temporal_distance/240822-120009-887109_flc2_awr_mini3'
         # load_path='data/temporal_distance/240817-161724-059712_flc2_awr_td'
-        load_path='data/temporal_distance/240903-204422-325287_flc2_awr_td_mini3_lr2e-3_b64_lse1'
+        # load_path='data/temporal_distance/240903-204422-325287_flc2_awr_td_mini3_lr2e-3_b64_lse1'
+        load_path='data/temporal_distance/240905-214209-104673_flc2_awr_td_mini3_lr5e-3_b64_lse1'
     )
     trainer.train()
     

@@ -131,7 +131,14 @@ class TemporalDistanceDataset(Dataset):
             0, 
             future_idx[:,:,None].tile(len(self.env.achieved_idx)))
         
-        return {'goal': goal, 'future_goal': future_goal, 'distance': distance}
+        if self.config['temporal_distance']['objective'] == 'temporal':
+            final_distance = distance
+        elif self.config['temporal_distance']['objective'] == 'euclidean':
+            final_distance = torch.norm(goal[:, :, self.env.achieved_idx] - future_goal, dim=2)
+        else:
+            raise ValueError()
+        
+        return {'goal': goal, 'future_goal': future_goal, 'distance': final_distance}
 
     def get_relabel_idx(self, env, dones):
         """ copied from awr.py """
