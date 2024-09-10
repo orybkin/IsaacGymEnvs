@@ -3,6 +3,7 @@ from ml_collections import config_flags
 
 ig_push_config = ml_collections.ConfigDict({
     'experiment': '',
+    'wandb_entity': 'oleh-rybkin',
     'num_envs': 8192,
     'clip_observations': 5.0,
     'clip_actions': 1,
@@ -42,7 +43,21 @@ ig_push_config = ml_collections.ConfigDict({
     'goal_interpolation': 1.,
     'onpolicy_coef': 1., 
     'temporal_distance': {
+        'objective': 'temporal',
         'lr': 1e-3,
+        'mini_epochs': 5,
+        'full_state': False,
+        'neg_goal_selection': 'achieved',
+        'negative_pairs_frac': 1.,
+        'classifier_selection': 'mode',
+        'logsumexp_alpha': 1.,
+        'regression': False,
+        'last_logit_rew': 0,
+        'plot_every': 50,
+        'save_data': False,
+        'data_overwrite_lines': False,
+        'truncate_grads': False,
+        'grad_norm': 1.
     }
 })
 

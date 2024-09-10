@@ -86,9 +86,16 @@ class TemporalDistanceTrainer:
         data = np.load(Path(self.load_path) / f'{epoch_num}.npy', allow_pickle=True).item()
         data = {k: torch.tensor(v) for k, v in data.items()}
         data['distance'] = torch.where(data['distance'] >= self.config['horizon_length'], self.config['relabel_every'], data['distance'])  # overwrite
-        self.dataset = SimpleTemporalDistanceDataset(self.config, data)
+        if self.config['temporal_distance']['objective'] == 'euclidean':
+            self._data_remove_negatives(data)
         if self.config['temporal_distance']['data_overwrite_lines']:
-            self._data_overwrite_lines()
+            self._data_overwrite_lines(data)
+        self.dataset = SimpleTemporalDistanceDataset(self.config, data)
+            
+    def _data_remove_negatives(self, data):
+        is_negative = data['distance'] == self.config['relabel_every']
+        for k, v in data.items():
+            data[k] = v[~is_negative]
         
     def _data_overwrite_lines(self, data):
         bound = self.env.goal_position_noise
@@ -202,7 +209,8 @@ def main(_):
         # load_path='data/temporal_distance/240822-120009-887109_flc2_awr_mini3'
         # load_path='data/temporal_distance/240817-161724-059712_flc2_awr_td'
         # load_path='data/temporal_distance/240903-204422-325287_flc2_awr_td_mini3_lr2e-3_b64_lse1'
-        load_path='data/temporal_distance/240905-214209-104673_flc2_awr_td_mini3_lr5e-3_b64_lse1'
+        # load_path='data/temporal_distance/240905-214209-104673_flc2_awr_td_mini3_lr5e-3_b64_lse1'
+        load_path='data/temporal_distance/240908-153328-055645_flc2_awr_tdeuclid_mini5_debug'
     )
     trainer.train()
     

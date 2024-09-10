@@ -90,12 +90,15 @@ class TemporalDistanceDataset(Dataset):
 
         # Build dataset
         pairs = self.get_positive_pairs(buffer, self.config['temporal_distance']['neg_goal_selection'])
-        negative_pairs = {k: v.flip(1) for k,v in pairs.items()}  # TODO: sample randomly instead of flip
-        negative_pairs['distance'][:] = max(config['relabel_every'], config['horizon_length'])
-        pairs = {k: v.flatten(0, 1) for k,v in pairs.items()}
-        negative_pairs = {k: v.flatten(0, 1) for k,v in negative_pairs.items()}
-        negative_fraction = int(pairs['goal'].shape[0] * self.config['temporal_distance']['negative_pairs_frac'])
-        pairs = {k: torch.cat([v, negative_pairs[k][:negative_fraction]], dim=0) for k,v in pairs.items()}
+        if self.config['temporal_distance']['objective'] == 'temporal':
+            negative_pairs = {k: v.flip(1) for k,v in pairs.items()}  # TODO: sample randomly instead of flip
+            negative_pairs['distance'][:] = max(config['relabel_every'], config['horizon_length'])
+            pairs = {k: v.flatten(0, 1) for k,v in pairs.items()}
+            negative_pairs = {k: v.flatten(0, 1) for k,v in negative_pairs.items()}
+            negative_fraction = int(pairs['goal'].shape[0] * self.config['temporal_distance']['negative_pairs_frac'])
+            pairs = {k: torch.cat([v, negative_pairs[k][:negative_fraction]], dim=0) for k,v in pairs.items()}
+        elif self.config['temporal_distance']['objective'] == 'euclidean':
+            pairs = {k: v.flatten(0, 1) for k,v in pairs.items()}
         
         self.pairs = pairs
         self.batch_size = self.pairs['goal'].shape[0]

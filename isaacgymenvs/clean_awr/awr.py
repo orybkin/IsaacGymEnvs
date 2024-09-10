@@ -595,9 +595,12 @@ class AWRAgent():
                     distances = distances.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
                     if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
                         self.temporal_distance_viz.hist('temporal_distance/state_desired_hist', distances.flatten())
-                    
-                    distances = torch.where(distances == self.config['relabel_every'], last_logit_label, distances)
-                    td_rewards = - distances / self.config['relabel_every']
+                    if self.config['temporal_distance']['objective'] == 'temporal':
+                        distances = torch.where(distances == self.config['relabel_every'], last_logit_label, distances)
+                        td_rewards = - distances / self.config['relabel_every']
+                    elif self.config['temporal_distance']['objective'] == 'euclidean':
+                        td_rewards = -distances
+                        # td_rewards = 1 - torch.tanh(self.vec_env.env.dist_reward_dropoff * distances)
                     mb_rewards = td_rewards
             
             mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
