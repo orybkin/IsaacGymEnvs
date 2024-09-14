@@ -331,7 +331,7 @@ class SACAgent(BaseAlgorithm):
                 cdf_right = normal_dist.cdf(self.bin_edges[1:])
                 target_probs = cdf_right - cdf_left
                 target_probs = target_probs / target_probs.sum(dim=-1, keepdim=True)
-                loss = F.cross_entropy(logits, target_probs)
+                loss = F.cross_entropy(logits, target_probs, reduction='none')
                 return loss
         hl_loss = HistogramLoss(-10, 110, 100, self.config['sigma_to_bin_ratio'])
         hl_loss.to(self.device)
@@ -357,9 +357,9 @@ class SACAgent(BaseAlgorithm):
             critic2_loss = hl_loss(current_Q2_logits, target_Q)
         critic_loss = critic1_loss + critic2_loss 
 
-        info = {'losses/c_loss': critic_loss.detach(),
-                'losses/c1_loss': critic1_loss.detach(),
-                'losses/c2_loss': critic2_loss.detach(),
+        info = {'losses/c_loss': critic_loss.mean().detach(),
+                'losses/c1_loss': critic1_loss.mean().detach(),
+                'losses/c2_loss': critic2_loss.mean().detach(),
                 'info/train_reward': reward.mean().detach(),
                 'info/c_explained_variance': explained_variance(current_Q1, target_Q),}
 
@@ -385,13 +385,12 @@ class SACAgent(BaseAlgorithm):
             # actor_Q = (actor_Q1 + actor_Q2) / 2
             actor_Q = torch.min(actor_Q1, actor_Q2)
 
-            actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q)
-        actor_loss = actor_loss.mean()
+            actor_loss = (torch.max(self.alpha.detach(), self.min_alpha) * log_prob - actor_Q).mean(1)
 
         for p in self.model.sac_network.critic.parameters():
             p.requires_grad = True
         
-        info = {'losses/a_loss': actor_loss.detach(), 
+        info = {'losses/a_loss': actor_loss.mean().detach(), 
                'losses/entropy': entropy.detach(),
                'info/log_prob': log_prob.mean().detach(),
                'info/alpha': self.alpha.detach(),
@@ -418,7 +417,7 @@ class SACAgent(BaseAlgorithm):
         with torch.no_grad():    
             dist2 = self.model.actor(obs)
             kl = torch.distributions.kl.kl_divergence(dist, dist2).mean()
-            ce = dist2.log_prob(action.clamp(-0.99, 0.99)).sum(-1, keepdim=True).mean()
+            ce = -dist2.log_prob(action.clamp(-0.99, 0.99)).sum(-1, keepdim=True).mean()
         
         info = {'losses/b_loss': loss.detach(), 
                'info/behavior_kl': kl,
@@ -431,13 +430,14 @@ class SACAgent(BaseAlgorithm):
             target_param.data.copy_(tau * param.data +
                                     (1.0 - tau) * target_param.data)
 
-    def update(self, step):
+    def update(self, step, logging):
+        log_gradient_noise = False
         obs, action, reward, next_obs, done = self.replay_buffer.sample(self.batch_size)
 
         # Critic
         critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
         self.critic_optimizer.zero_grad(set_to_none=True)
-        critic_loss.backward()
+        critic_loss.mean().backward()
         if self.grad_norm is not None:
             grad_norm = nn.utils.clip_grad_norm_(self.model.sac_network.critic.parameters(), self.grad_norm)
         else:
@@ -445,13 +445,37 @@ class SACAgent(BaseAlgorithm):
         critic_loss_info['info/grad_norm'] = grad_norm.detach()
         self.critic_optimizer.step()
 
+        # Gradient noise 
+        if logging and log_gradient_noise:
+            critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
+            elements = min(10, obs.shape[0])
+            individual_grads = torch.autograd.grad(critic_loss[:elements], self.model.sac_network.critic.parameters(), grad_outputs=torch.eye(elements, device=self._device), is_grads_batched=True)
+            individual_grads = torch.cat([p.flatten(1) for p in individual_grads], 1)
+            critical_noise = torch.mean(torch.std(individual_grads, 0) ** 2) / torch.mean(torch.mean(individual_grads, 0) ** 2)
+            gradient_noise = (torch.std(individual_grads, 0) ** 2).mean()
+            critic_loss_info['info/critical_noise'] = critical_noise
+            critic_loss_info['info/gradient_noise'] = gradient_noise
+            self.critic_optimizer.zero_grad(set_to_none=True)
+
         actor_loss_info = {}
         if step % self.policy_update_fraction == 0:
             # Actor
             actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
             self.actor_optimizer.zero_grad(set_to_none=True)
-            actor_loss.backward()
+            actor_loss.mean().backward()
             self.actor_optimizer.step()
+
+            # Gradient noise 
+            if logging and log_gradient_noise:
+                actor_loss, actor_loss_info = self.update_actor_and_alpha(obs)
+                elements = min(10, obs.shape[0])
+                individual_grads = torch.autograd.grad(actor_loss[:elements], self.model.sac_network.actor.parameters(), grad_outputs=torch.eye(elements, device=self._device), is_grads_batched=True)
+                individual_grads = torch.cat([p.flatten(1) for p in individual_grads], 1)
+                critical_noise = torch.mean(torch.std(individual_grads, 0) ** 2) / torch.mean(torch.mean(individual_grads, 0) ** 2)
+                gradient_noise = (torch.std(individual_grads, 0) ** 2).mean()
+                actor_loss_info['info/actor_critical_noise'] = critical_noise
+                actor_loss_info['info/actor_gradient_noise'] = gradient_noise
+                self.actor_optimizer.zero_grad(set_to_none=True)
 
             behavior_policy_loss, behavior_policy_loss_info = self.update_behavior_policy(obs, action)
             self.behavior_policy_optimizer.zero_grad(set_to_none=True)
@@ -574,13 +598,12 @@ class SACAgent(BaseAlgorithm):
         self.mean_rewards = self.last_mean_rewards = -1000000000
         self.algo_observer.after_clear_stats()
 
-    def play_steps(self, random_exploration = False):
+    def train_epoch(self, logging):
+        random_exploration = self.epoch_num < self.num_warmup_steps
         total_time_start = time.time()
         total_update_time = 0
         total_time = 0
         step_time = 0.0
-        actor_metrics = defaultdict(list)
-        critic_metrics = defaultdict(list)
 
         for s in range(self.num_steps_per_episode):
             obs = self.obs
@@ -635,9 +658,9 @@ class SACAgent(BaseAlgorithm):
                 self.set_train()
                 update_time_start = time.time()
                 for _ in range(self.gradient_steps):
-                    actor_loss_info, critic_loss_info = self.update(self.update_num)
-                    for key, value in actor_loss_info.items(): actor_metrics[key].append(value)
-                    for key, value in critic_loss_info.items(): critic_metrics[key].append(value)
+                    actor_loss_info, critic_loss_info = self.update(self.update_num, logging)
+                    for key, value in actor_loss_info.items(): self.actor_metrics[key].append(value)
+                    for key, value in critic_loss_info.items(): self.critic_metrics[key].append(value)
                     self.update_num += 1
                 update_time_end = time.time()
                 update_time = update_time_end - update_time_start
@@ -656,7 +679,7 @@ class SACAgent(BaseAlgorithm):
         total_time = total_time_end - total_time_start
         play_time = total_time - total_update_time
 
-        return step_time, play_time, total_update_time, total_time, actor_metrics, critic_metrics
+        return step_time, play_time, total_update_time, total_time, self.actor_metrics, self.critic_metrics
 
     def training_now(self):
         if self.fill_buffer_first:
@@ -664,15 +687,13 @@ class SACAgent(BaseAlgorithm):
         else:
             return True
 
-    def train_epoch(self):
-        random_exploration = self.epoch_num < self.num_warmup_steps
-        return self.play_steps(random_exploration)
-
     def train(self):
         self.init_tensors()
         self.algo_observer.after_init(self)
         test_check = Every(self.test_every_episodes * (self.vec_env.env.max_episode_length-1))
         render_check = Every(self.vec_env.env.render_every_episodes * (self.vec_env.env.max_episode_length-1))
+        self.actor_metrics = defaultdict(list)
+        self.critic_metrics = defaultdict(list)
         reset_check = Every(self.reset_every_steps)
         total_time = 0
         # rep_count = 0
@@ -684,7 +705,8 @@ class SACAgent(BaseAlgorithm):
                 print('Reset network!')
                 self.build_network()
             self.epoch_num += 1
-            step_time, play_time, update_time, epoch_total_time, actor_metrics, critic_metrics = self.train_epoch()
+            logging = self.epoch_num % 1000 == 0
+            step_time, play_time, update_time, epoch_total_time, actor_metrics, critic_metrics = self.train_epoch(logging)
 
             total_time += epoch_total_time
 
@@ -695,7 +717,7 @@ class SACAgent(BaseAlgorithm):
             fps_step_inference = curr_frames / play_time
             fps_total = curr_frames / epoch_total_time
             
-            if self.epoch_num % 1000 == 0:
+            if logging:
                 self.writer.add_scalar('performance/step_inference_rl_update_fps', fps_total, self.frame)
                 self.writer.add_scalar('performance/step_inference_fps', fps_step_inference, self.frame)
                 self.writer.add_scalar('performance/step_fps', fps_step, self.frame)
@@ -713,6 +735,8 @@ class SACAgent(BaseAlgorithm):
                     for key, value in actor_metrics.items():
                         if value[0] is not None:
                             self.writer.add_scalar(key, torch_ext.mean_list(value).item(), self.frame)
+                    self.critic_metrics = defaultdict(list)
+                    self.actor_metrics = defaultdict(list)
 
                 self.writer.add_scalar('info/epochs', self.epoch_num, self.frame)
                 self.writer.add_scalar('info/updates', self.update_num, self.frame)
