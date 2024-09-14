@@ -27,7 +27,7 @@ INSTALL_REQUIRES = [
     "gymnasium_robotics[mujoco]",
     "ml_collections",
     "cython<3"
-    "gymnasium==3.3.0",
+    "gymnasium==0.28.1",
     "tensorboardx==2.6.2.2",
     ]
 
