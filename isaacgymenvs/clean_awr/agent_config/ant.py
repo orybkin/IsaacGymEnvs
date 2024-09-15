@@ -42,10 +42,12 @@ ant_config = ml_collections.ConfigDict({
     'relabel_strategy': 'final',
     'goal_interpolation': 1.,
     'onpolicy_coef': 1., 
+    'buffer_horizons': 1,
     'temporal_distance': {
         'objective': 'temporal',
         'lr': 1e-3,
         'mini_epochs': 5,
+        'interleave': False,
         'full_state': False,
         'neg_goal_selection': 'achieved',
         'negative_pairs_frac': 1.,
