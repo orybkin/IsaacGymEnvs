@@ -100,6 +100,51 @@ class ExperienceBuffer:
                 res_dict[k] = transform_op(v)
         
         return res_dict
+    
+    def rotate(self): ...
+    
+class LongExperienceBuffer():
+    def __init__(self, observation_space, action_space, horizon_length, num_actors, num_buffers, device):
+        self.device = device
+        self.num_agents = num_actors
+        self.action_space = action_space
+        self.horizon_length = horizon_length
+        self.observation_space = observation_space
+        self.num_buffers = num_buffers
+        self.buffers = [ExperienceBuffer(observation_space, action_space, horizon_length, num_actors, device) for _ in range(num_buffers)]
+        self.names = self.buffers[0].tensor_dict.keys()
+        self.tensor_dict = {}
+        self._update_full_tensor_dict()
+    
+    def _update_tensor_dict(self, name):
+        self.tensor_dict[name] = torch.cat([buffer.tensor_dict[name] for buffer in self.buffers], dim=0)
+
+    def _update_full_tensor_dict(self):
+        for name in self.names:
+            self._update_tensor_dict(name)
+
+    def rotate(self):
+        self.buffers = self.buffers[1:] + [self.buffers[0]]
+        self._update_full_tensor_dict()
+
+    def update_data(self, name, index, val):
+        self.buffers[-1].update_data(name, index, val)
+        self._update_tensor_dict(name)
+        
+    def get_transformed_list(self, transform_op, tensor_list):
+        res_dict = defaultdict(list)
+        transforms = [buffer.get_transformed_list(transform_op, tensor_list) for buffer in self.buffers]
+        for transform in transforms:
+            for k in tensor_list:
+                v = transform.get(k)
+                if v is not None:
+                    res_dict[k].append(v)
+        for k, v in res_dict.items():
+            if type(v) is dict:
+                res_dict[k] = {kd: torch.cat(vd) for kd, vd in v.items()}
+            else:
+                res_dict[k] = torch.cat(v)
+        return res_dict
 
 class Diagnostics():
     def __init__(self):

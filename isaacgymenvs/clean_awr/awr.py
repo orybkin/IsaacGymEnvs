@@ -23,7 +23,7 @@ from pathlib import Path
 
 from isaacgymenvs.clean_awr.awr_networks import AWRNetwork, _neglogp
 from isaacgymenvs.clean_awr.temporal_distance import TemporalDistanceNetwork, TemporalDistanceDataset
-from isaacgymenvs.clean_awr.awr_utils import AWRDataset, Diagnostics, ExperienceBuffer
+from isaacgymenvs.clean_awr.awr_utils import AWRDataset, Diagnostics, ExperienceBuffer, LongExperienceBuffer
 from isaacgymenvs.clean_awr.viz.td import TemporalDistanceVisualizer
 from isaacgymenvs.utils.rlgames_utils import RLGPUEnv, RLGPUAlgoObserver, Every, get_grad_norm
 import ml_collections
@@ -104,15 +104,18 @@ class AWRAgent():
         self.play_time = 0
         self.epoch_num = 0
         self.curr_frames = 0
+        self.use_td = (self.config['temporal_distance']['objective'] != 'None')
         self.train_dir = 'runs'
         self.experiment_dir = os.path.join(self.train_dir, self.config['run_name'])
         self.nn_dir = os.path.join(self.experiment_dir, 'nn')
         self.summaries_dir = os.path.join(self.experiment_dir, 'summaries')
-        self.save_td_dir = os.path.join('data', 'temporal_distance', self.config['run_name'])
         os.makedirs(self.train_dir, exist_ok=True)
         os.makedirs(self.experiment_dir, exist_ok=True)
         os.makedirs(self.nn_dir, exist_ok=True)
         os.makedirs(self.summaries_dir, exist_ok=True)
+        if self.use_td:
+            self.save_td_dir = os.path.join('data', 'temporal_distance', self.config['run_name'])
+            os.makedirs(self.save_td_dir, exist_ok=True)
         self.writer = SummaryWriter(self.summaries_dir)
         self.algo_observer = algo_observer
         self.algo_observer.before_init('run', config, self.config['run_name'])
@@ -132,27 +135,29 @@ class AWRAgent():
         self.model.to(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), self.config['lr'], eps=1e-08, weight_decay=0)
         
-        if not self.config['temporal_distance']['full_state']:
-            self.td_idx = self.vec_env.env.achieved_idx
-        else:
-            self.td_idx = [i for i in range(self.vec_env.env.cfg['env']['numObservations']) if i not in self.vec_env.env.desired_idx]
-        self.max_pred = max(self.config['relabel_every'], self.config['horizon_length'])  # relabel_every should always be bigger
-        self.td_output_size = self.max_pred + 1 if not self.config['temporal_distance']['regression'] else 1
-        assert len(self.vec_env.env.achieved_idx) == len(self.vec_env.env.desired_idx)
-        kw = dict(
-            units=self.config['hidden_dims'], 
-            input_size=len(self.td_idx) + len(self.vec_env.env.achieved_idx),
-            output_size=self.td_output_size,
-            td_idx=self.td_idx,
-            achieved_idx=self.vec_env.env.achieved_idx,
-        )
-        if not self.config['temporal_distance']['regression']:
-            kw['classifier_selection'] = self.config['temporal_distance']['classifier_selection']
-        if self.config['temporal_distance']['classifier_selection'] == 'logsumexp':
-            kw['logsumexp_alpha'] = self.config['temporal_distance']['logsumexp_alpha']
-        self.temporal_distance = TemporalDistanceNetwork(**kw).to(self.device)
-        self.temporal_distance_optimizer = optim.Adam(self.temporal_distance.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
-        self.temporal_distance_viz = TemporalDistanceVisualizer(self)
+        assert self.config['temporal_distance']['objective'] in ['None', 'temporal', 'euclidean']
+        if self.use_td:
+            if not self.config['temporal_distance']['full_state']:
+                self.td_idx = self.vec_env.env.achieved_idx
+            else:
+                self.td_idx = [i for i in range(self.vec_env.env.cfg['env']['numObservations']) if i not in self.vec_env.env.desired_idx]
+            self.max_pred = max(self.config['relabel_every'], self.config['horizon_length'])  # relabel_every should always be bigger
+            self.td_output_size = self.max_pred + 1 if not self.config['temporal_distance']['regression'] else 1
+            assert len(self.vec_env.env.achieved_idx) == len(self.vec_env.env.desired_idx)
+            kw = dict(
+                units=self.config['hidden_dims'],
+                input_size=len(self.td_idx) + len(self.vec_env.env.achieved_idx),
+                output_size=self.td_output_size,
+                td_idx=self.td_idx,
+                achieved_idx=self.vec_env.env.achieved_idx,
+            )
+            if not self.config['temporal_distance']['regression']:
+                kw['classifier_selection'] = self.config['temporal_distance']['classifier_selection']
+            if self.config['temporal_distance']['classifier_selection'] == 'logsumexp':
+                kw['logsumexp_alpha'] = self.config['temporal_distance']['logsumexp_alpha']
+            self.temporal_distance = TemporalDistanceNetwork(**kw).to(self.device)
+            self.temporal_distance_optimizer = optim.Adam(self.temporal_distance.parameters(), self.config['temporal_distance']['lr'], eps=1e-08, weight_decay=0)
+            self.temporal_distance_viz = TemporalDistanceVisualizer(self)
         
         if self.config['normalize_value']:
             self.value_mean_std = self.model.value_mean_std
@@ -444,8 +449,8 @@ class AWRAgent():
         batch_size = self.config['num_actors']
 
         # Buffers to hold rollouts in.
-        self.experience_buffer = ExperienceBuffer(self.observation_space, self.action_space, self.config['horizon_length'], self.config['num_actors'], self.device)
-        self.test_buffer = ExperienceBuffer(self.observation_space, self.action_space, self.vec_env.env.max_episode_length, self.vec_env.env.max_pix, self.device)
+        self.experience_buffer = LongExperienceBuffer(self.observation_space, self.action_space, self.config['horizon_length'], self.config['num_actors'], self.config['buffer_horizons'], self.device)
+        self.test_buffer = LongExperienceBuffer(self.observation_space, self.action_space, self.vec_env.env.max_episode_length, self.vec_env.env.max_pix, self.config['buffer_horizons'], self.device)
 
         # Stats
         val_shape = (self.config['horizon_length'], batch_size, 1)
@@ -538,107 +543,32 @@ class AWRAgent():
             metrics = defaultdict(list)
             td_hist_buffer = {}
             euclid_buffer = {}
+
+            # =====================================================
+            # Train distance function and policy and value function
+            # =====================================================
             
-            temporal_distance_dataset = TemporalDistanceDataset(self.experience_buffer, self.config, self.vec_env.env)
-
-            if self.config['temporal_distance']['save_data']:
-                if self.epoch_num == 1: print('Saving TD data to:', self.save_td_dir)
-                td_save_path = Path(self.save_td_dir) / f'{self.epoch_num}.npy'
-                td_save_path.parent.mkdir(parents=True, exist_ok=True)
-                td_save_dict = {k: v.detach().cpu().numpy() for k, v in temporal_distance_dataset.pairs.items()}
-                np.save(td_save_path, td_save_dict)
-                
-            # ===============================
-            # Train distance function
-            # ===============================
-
-            for mini_ep in range(0, self.config['temporal_distance']['mini_epochs']):
-                for i in range(len(self.dataset)):
-                    losses = self.temporal_distance.loss(temporal_distance_dataset[i])
-                    loss_key = 'ce' if not self.config['temporal_distance']['regression'] else 'mse'
-                    losses[loss_key].backward()
-                    grad_norm = get_grad_norm(self.model.parameters()).detach()
-                    if self.config['temporal_distance']['truncate_grads']:
-                        nn.utils.clip_grad_norm_(self.model.parameters(), self.config['temporal_distance']['grad_norm'])
-                    self.temporal_distance_optimizer.step()
-                    self.temporal_distance_optimizer.zero_grad()
-                    
-                    metrics['temporal_distance/grad_norm'].append(grad_norm)
-                    if mini_ep in (0, self.config['temporal_distance']['mini_epochs'] - 1):
-                        phase = 'val_' if mini_ep == 0 else ''
-                        for k in [loss_key, 'accuracy', 'euclid_corr']:
-                            metrics[f'temporal_distance/{phase}{k}'].append(losses[k])
-                        if mini_ep > 0 and i == 0:  # selected arbitrarily
-                            td_hist_buffer = {'pred': losses['pred'], 'target': temporal_distance_dataset[i]['distance']}
-                            euclid_buffer = {'pred': losses['pred'], 'euclidean': losses['euclidean']}
-                # print('epoch', self.epoch_num, {k: round(v.item(), 4) for k, v in losses.items()})
+            if self.use_td:
+                temporal_distance_dataset = TemporalDistanceDataset(self.experience_buffer, self.config, self.vec_env.env)
+                if self.config['temporal_distance']['save_data']:
+                    if self.epoch_num == 1: print('Saving TD data to:', self.save_td_dir)
+                    td_save_path = os.path.join(self.save_td_dir, f'{self.epoch_num}.npy')
+                    td_save_dict = {k: v.detach().cpu().numpy() for k, v in temporal_distance_dataset.pairs.items()}
+                    np.save(td_save_path, td_save_dict)
             
-            if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
-                self.temporal_distance_viz.viz_success(success_buffer)
-                self.temporal_distance_viz.hist(
-                    'temporal_distance/state_desired_scatter',
-                    td_hist_buffer['pred'].flatten(), 
-                    td_hist_buffer['target'].flatten())
-                self.temporal_distance_viz.simple_scatter(
-                    'temporal_distance/euclidean_scatter',
-                    euclid_buffer['pred'],
-                    euclid_buffer['euclidean'],
-                    xlabel='pred',
-                    ylabel='euclidean')
-
-            if self.config['relabel']:
-                # Relabel rewards with temporal distance
-                with torch.no_grad():
-                    obs = self.experience_buffer.tensor_dict['obses']
-                    distances = self.run_td_in_slices(obs[:, :, self.td_idx].flatten(0,1),
-                                                      obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
-                    distances = distances.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
-                    if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
-                        self.temporal_distance_viz.hist('temporal_distance/state_desired_hist', distances.flatten())
-                    if self.config['temporal_distance']['objective'] == 'temporal':
-                        distances = torch.where(distances == self.config['relabel_every'], last_logit_label, distances)
-                        td_rewards = - distances / self.config['relabel_every']
-                    elif self.config['temporal_distance']['objective'] == 'euclidean':
-                        td_rewards = -distances
-                        # td_rewards = 1 - torch.tanh(self.vec_env.env.dist_reward_dropoff * distances)
-                    mb_rewards = td_rewards
-            
-            mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
-            mb_returns = mb_advs + mb_values
-            batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
-            batch_dict['returns'] = swap_and_flatten01(mb_returns)
-            batch_dict['step_time'] = step_time
-
-            self.return_std = dict()
-            self.prepare_dataset(batch_dict, self.dataset, fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='')
-
-            kl_dataset = self.dataset
-            self.algo_observer.after_steps()
-            ep_kls = []
-
-            # ===============================
-            # Train policy and value function.
-            # ===============================
-
-            for mini_ep in range(0, self.config['mini_epochs']):
-                ep_kls = []
-
-                # self.dataset.shuffle()
-                # if self.relabel:
-                #     self.relabeled_dataset.shuffle()
-                for i in range(len(self.dataset)):
-                    losses, kl, last_lr, lr_mul, cmu, csigma = self.train_awr(self.dataset[i])
-                    for k, v in losses.items(): 
-                        metrics[f'losses/{k}'].append(v)
-                    ep_kls.append(kl)
-                    kl_dataset.update_mu_sigma(cmu, csigma)
-
-                av_kls = torch_ext.mean_list(ep_kls)
-                metrics['info/kl'].append(av_kls)
-                self.diagnostics.mini_epoch(self, mini_ep)
-                if self.config['normalize_input']:
-                    self.model.running_mean_std.eval()
-
+            last_lr, lr_mul = self._train_helper(temporal_distance_dataset if self.use_td else None,
+                                                 metrics, 
+                                                 td_hist_buffer, 
+                                                 euclid_buffer, 
+                                                 success_buffer, 
+                                                 last_logit_label, 
+                                                 fdones, 
+                                                 last_values, 
+                                                 mb_fdones, 
+                                                 mb_values, 
+                                                 mb_rewards,
+                                                 step_time, 
+                                                 fixed_advantage_normalizer)
             update_time_end = time.time()
             play_time = play_time_end - play_time_start
             update_time = update_time_end - update_time_start
@@ -678,6 +608,8 @@ class AWRAgent():
 
                 self.writer.add_scalar('episode_lengths', mean_lengths, frame)
             update_time = 0
+
+            self.experience_buffer.rotate()
             
             # ===============================
             # Evaluate policy in test mode.
@@ -689,6 +621,137 @@ class AWRAgent():
             #     self.test(render=test_render_check.check(test_counter))
             #     self.algo_observer.after_print_stats(frame, epoch_num, total_time, '_test')
             #     print("Done Testing.")
+
+
+    def _train_helper(self, 
+                      temporal_distance_dataset, 
+                      metrics, 
+                      td_hist_buffer, 
+                      euclid_buffer, 
+                      success_buffer, 
+                      last_logit_label, 
+                      fdones, 
+                      last_values, 
+                      mb_fdones, 
+                      mb_values, 
+                      mb_rewards,
+                      step_time, 
+                      fixed_advantage_normalizer):
+        awr_num_epochs = self.config['mini_epochs']
+        td_num_epochs = self.config['temporal_distance']['mini_epochs']
+        if self.use_td:
+            if self.config['temporal_distance']['interleave']:
+                td_mini_ep = awr_mini_ep = 0
+                train_order = []
+                for mini_ep in range(td_num_epochs + awr_num_epochs):
+                    if (td_mini_ep + 1) / (mini_ep + 1) <= td_num_epochs / (td_num_epochs + awr_num_epochs):
+                        train_order.append('td')
+                        td_mini_ep += 1
+                    else:
+                        train_order.append('awr')
+                        awr_mini_ep += 1
+            else:
+                train_order = ['td'] * td_num_epochs + ['awr'] * awr_num_epochs
+        else:
+            train_order = ['awr'] * awr_num_epochs
+
+        td_mini_ep = awr_mini_ep = 0
+        kl_dataset = self._update_dataset(fdones, last_values, mb_fdones, mb_values, mb_rewards, step_time, fixed_advantage_normalizer)
+        for train_cmd in train_order:
+            if train_cmd == 'td':
+                self._train_epoch_td(temporal_distance_dataset, td_mini_ep, metrics, td_hist_buffer, euclid_buffer)
+                if self.config['relabel']:
+                    mb_rewards = self._calculate_td_rewards(last_logit_label)
+                kl_dataset = self._update_dataset(fdones, last_values, mb_fdones, mb_values, mb_rewards, step_time, fixed_advantage_normalizer)
+                td_mini_ep += 1
+            else:
+                last_lr, lr_mul = self._train_epoch_awr(kl_dataset, awr_mini_ep, metrics)
+                awr_mini_ep += 1
+
+        if self.use_td and self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
+            self.temporal_distance_viz.viz_success(success_buffer)
+            self.temporal_distance_viz.hist('temporal_distance/state_desired_scatter', td_hist_buffer['pred'].flatten(), td_hist_buffer['target'].flatten())
+            self.temporal_distance_viz.simple_scatter('temporal_distance/euclidean_scatter', euclid_buffer['pred'], euclid_buffer['euclidean'], xlabel='pred', ylabel='euclidean')
+
+        return last_lr, lr_mul
+    
+
+    def _train_epoch_awr(self, kl_dataset, mini_ep, metrics):
+        ep_kls = []
+
+        # self.dataset.shuffle()
+        # if self.relabel:
+        #     self.relabeled_dataset.shuffle()
+        for i in range(len(self.dataset)):
+            losses, kl, last_lr, lr_mul, cmu, csigma = self.train_awr(self.dataset[i])
+            for k, v in losses.items(): 
+                metrics[f'losses/{k}'].append(v)
+            ep_kls.append(kl)
+            kl_dataset.update_mu_sigma(cmu, csigma)
+
+        av_kls = torch_ext.mean_list(ep_kls)
+        metrics['info/kl'].append(av_kls)
+        self.diagnostics.mini_epoch(self, mini_ep)
+        if self.config['normalize_input']:
+            self.model.running_mean_std.eval()
+        return last_lr, lr_mul
+
+    def _train_epoch_td(self, temporal_distance_dataset, mini_ep, metrics, td_hist_buffer, euclid_buffer):
+        for i in range(len(self.dataset)):
+            losses = self.temporal_distance.loss(temporal_distance_dataset[i])
+            loss_key = 'ce' if not self.config['temporal_distance']['regression'] else 'mse'
+            losses[loss_key].backward()
+            grad_norm = get_grad_norm(self.model.parameters()).detach()
+            if self.config['temporal_distance']['truncate_grads']:
+                nn.utils.clip_grad_norm_(self.model.parameters(), self.config['temporal_distance']['grad_norm'])
+            self.temporal_distance_optimizer.step()
+            self.temporal_distance_optimizer.zero_grad()
+            
+            metrics['temporal_distance/grad_norm'].append(grad_norm)
+            if mini_ep in (0, self.config['temporal_distance']['mini_epochs'] - 1):
+                phase = 'val_' if mini_ep == 0 else ''
+                for k in [loss_key, 'accuracy', 'euclid_corr']:
+                    metrics[f'temporal_distance/{phase}{k}'].append(losses[k])
+                if mini_ep > 0 and i == 0:  # selected arbitrarily
+                    td_hist_buffer.update({'pred': losses['pred'], 'target': temporal_distance_dataset[i]['distance']})
+                    euclid_buffer.update({'pred': losses['pred'], 'euclidean': losses['euclidean']})
+        # print('epoch', self.epoch_num, {k: round(v.item(), 4) for k, v in losses.items()})
+
+    def _calculate_td_rewards(self, last_logit_label):
+        with torch.no_grad():
+            obs = self.experience_buffer.tensor_dict['obses']
+            distances = self.run_td_in_slices(obs[:, :, self.td_idx].flatten(0,1),
+                                            obs[:, :, self.vec_env.env.desired_idx].flatten(0,1))
+            distances = distances.reshape(self.config['horizon_length'], self.config['num_actors'], -1)
+            if self.epoch_num % self.config['temporal_distance']['plot_every'] == 0:
+                self.temporal_distance_viz.hist('temporal_distance/state_desired_hist', distances.flatten())
+            if self.config['temporal_distance']['objective'] == 'temporal':
+                distances = torch.where(distances == self.config['relabel_every'], last_logit_label, distances)
+                td_rewards = - distances / self.config['relabel_every']
+            elif self.config['temporal_distance']['objective'] == 'euclidean':
+                td_rewards = -distances
+                # td_rewards = 1 - torch.tanh(self.vec_env.env.dist_reward_dropoff * distances)
+            # import matplotlib.pyplot as plt
+            # plt.hist((1 - torch.tanh(self.vec_env.env.dist_reward_dropoff * distances)).flatten().detach().cpu(), bins=60, label='td')
+            # plt.hist(mb_rewards.flatten().detach().cpu(), bins=60, label='mb')
+            # plt.savefig('nice.png')
+            # plt.close()
+        return td_rewards
+    
+    def _update_dataset(self, fdones, last_values, mb_fdones, mb_values, mb_rewards, step_time, fixed_advantage_normalizer):
+        mb_advs = self.discount_values(fdones, last_values, mb_fdones, mb_values, mb_rewards)
+        mb_returns = mb_advs + mb_values
+        batch_dict = self.experience_buffer.get_transformed_list(swap_and_flatten01, self.tensor_list)
+        batch_dict['returns'] = swap_and_flatten01(mb_returns)
+        batch_dict['step_time'] = step_time
+
+        self.return_std = dict()
+        self.prepare_dataset(batch_dict, self.dataset, fixed_advantage_normalizer=fixed_advantage_normalizer, identifier='')
+
+        kl_dataset = self.dataset
+        self.algo_observer.after_steps()
+
+        return kl_dataset
 
 
 # =======================

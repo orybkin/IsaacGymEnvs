@@ -176,6 +176,8 @@ class FrankaPushing(VecTask):
         # Set control limits
         self.cmd_limit = to_torch([0.1, 0.1, 0.1, 0.5, 0.5, 0.5], device=self.device).unsqueeze(0) if \
         self.control_type == "osc" else self._franka_effort_limits[:7].unsqueeze(0)
+        
+        self.success_key = "success_2"
 
         # Reset all environments
         self.reset_idx()

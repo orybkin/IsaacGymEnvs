@@ -87,27 +87,30 @@ class AWRNetwork(nn.Module):
 
         logstd = torch.tanh(logstd) # Clip to (-1, 1)
 
-        sigma = torch.exp(logstd)
-        distr = torch.distributions.Normal(mu, sigma, validate_args=False)
-        if is_train:
-            entropy = distr.entropy().sum(dim=-1)
-            prev_neglogp = _neglogp(prev_actions, mu, sigma, logstd)
-            result = {
-                'prev_neglogp' : torch.squeeze(prev_neglogp),
-                'values' : value,
-                'entropy' : entropy,
-                'mus' : mu,
-                'sigmas' : sigma
-            }                
-            return result
-        else:
-            selected_action = distr.sample()
-            neglogp = _neglogp(selected_action, mu, sigma, logstd)
-            result = {
-                'neglogpacs' : torch.squeeze(neglogp),
-                'values' : self.denorm_value(value),
-                'actions' : selected_action,
-                'mus' : mu,
-                'sigmas' : sigma
-            }
-            return result
+        try:
+            sigma = torch.exp(logstd)
+            distr = torch.distributions.Normal(mu, sigma, validate_args=False)
+            if is_train:
+                entropy = distr.entropy().sum(dim=-1)
+                prev_neglogp = _neglogp(prev_actions, mu, sigma, logstd)
+                result = {
+                    'prev_neglogp' : torch.squeeze(prev_neglogp),
+                    'values' : value,
+                    'entropy' : entropy,
+                    'mus' : mu,
+                    'sigmas' : sigma
+                }                
+                return result
+            else:
+                selected_action = distr.sample()
+                neglogp = _neglogp(selected_action, mu, sigma, logstd)
+                result = {
+                    'neglogpacs' : torch.squeeze(neglogp),
+                    'values' : self.denorm_value(value),
+                    'actions' : selected_action,
+                    'mus' : mu,
+                    'sigmas' : sigma
+                }
+                return result
+        except:
+            breakpoint()

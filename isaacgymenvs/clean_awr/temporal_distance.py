@@ -4,8 +4,12 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from isaacgymenvs.clean_awr.awr_networks import _build_sequential_mlp
 from torch.utils.data import Dataset
+from collections import defaultdict
+
+from isaacgymenvs.clean_awr.awr_networks import _build_sequential_mlp
+from isaacgymenvs.clean_awr.awr_utils import ExperienceBuffer, LongExperienceBuffer
+
 
 class TemporalDistanceNetwork(nn.Module):
     def __init__(self, 
@@ -115,8 +119,24 @@ class TemporalDistanceDataset(Dataset):
         
     def _torch_randint(self, low, high, size):
         return torch.randint(2**63 - 1, size=size, device=self.device) % (high - low) + low
-
+    
     def get_positive_pairs(self, buffer, goal_selection):
+        if type(buffer) is LongExperienceBuffer:
+            res_dict = defaultdict(list)
+            for sub_buffer in buffer.buffers:
+                for k, v in self._get_positive_pairs_experience_buffer(sub_buffer, goal_selection).items():
+                    res_dict[k].append(v)
+            for k, v in res_dict.items():
+                v = torch.cat(v)
+                # v = v[torch.randperm(v.shape[0])]   
+                res_dict[k] = v
+            return res_dict
+        elif type(buffer) is ExperienceBuffer:
+            return self._get_positive_pairs_experience_buffer(buffer, goal_selection)
+        else:
+            raise ValueError()
+
+    def _get_positive_pairs_experience_buffer(self, buffer, goal_selection):
         assert goal_selection in ('achieved', 'commanded')
         batch = self.config['num_actors']
         horizon = self.config['horizon_length']
