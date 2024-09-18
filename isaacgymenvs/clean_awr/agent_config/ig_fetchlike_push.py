@@ -4,6 +4,7 @@ from ml_collections import config_flags
 ig_fetchlike_config = ml_collections.ConfigDict({
     'experiment': '',
     'wandb_entity': 'oleh-rybkin',
+    'ppo': False,
     'num_envs': 8192,
     'clip_observations': 5.0,
     'clip_actions': 1,

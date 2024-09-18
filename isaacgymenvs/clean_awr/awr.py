@@ -265,6 +265,16 @@ class AWRAgent():
             delta = (mb_rewards[t] + self.config['gamma'] * nextvalues * nonterminal - mb_values[t]) * nonterminal
             mb_advs[t] = lastgaelam = delta + self.config['gamma'] * self.config['tau'] * nonterminal * lastgaelam
         return mb_advs
+
+    def actor_loss(self, old_action_neglog_probs_batch, action_neglog_probs, advantage, is_ppo, curr_e_clip):
+        if is_ppo:
+            ratio = torch.exp(old_action_neglog_probs_batch - action_neglog_probs)
+            surr1 = advantage * ratio
+            surr2 = advantage * torch.clamp(ratio, 1.0 - curr_e_clip, 1.0 + curr_e_clip)
+            a_loss = torch.max(-surr1, -surr2)
+        else:
+            a_loss = action_neglog_probs * torch.clamp((advantage / self.config['temperature']).exp(), max=20)
+        return a_loss
     
     def bound_loss(self, mu):
         if self.config['bounds_loss_coef'] is not None:
@@ -317,7 +327,7 @@ class AWRAgent():
             sigma = res_dict['sigmas']
 
             # AWR loss.
-            a_loss = action_log_probs * torch.clamp((advantage / self.config['temperature']).exp(), max=20)
+            a_loss = self.actor_loss(old_action_log_probs_batch, action_log_probs, advantage, self.config['ppo'], self.config['e_clip'])
 
             # Value function loss.
             if self.config['norm_by_return']:
