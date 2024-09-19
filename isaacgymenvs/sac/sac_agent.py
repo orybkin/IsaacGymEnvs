@@ -431,7 +431,7 @@ class SACAgent(BaseAlgorithm):
                                     (1.0 - tau) * target_param.data)
 
     def update(self, step, logging):
-        log_gradient_noise = False
+        log_gradient_noise = True
         obs, action, reward, next_obs, done = self.replay_buffer.sample(self.batch_size)
 
         # Critic
@@ -447,15 +447,35 @@ class SACAgent(BaseAlgorithm):
 
         # Gradient noise 
         if logging and log_gradient_noise:
+            self.critic_optimizer.zero_grad(set_to_none=True)
             critic_loss, critic_loss_info = self.update_critic(obs, action, reward, next_obs, ~done)
             elements = min(10, obs.shape[0])
             individual_grads = torch.autograd.grad(critic_loss[:elements], self.model.sac_network.critic.parameters(), grad_outputs=torch.eye(elements, device=self._device), is_grads_batched=True)
             individual_grads = torch.cat([p.flatten(1) for p in individual_grads], 1)
             critical_noise = torch.mean(torch.std(individual_grads, 0) ** 2) / torch.mean(torch.mean(individual_grads, 0) ** 2)
             gradient_noise = (torch.std(individual_grads, 0) ** 2).mean()
-            critic_loss_info['info/critical_noise'] = critical_noise
             critic_loss_info['info/gradient_noise'] = gradient_noise
+            critic_loss_info['info/gradient_noise_scale'] = critical_noise
             self.critic_optimizer.zero_grad(set_to_none=True)
+
+        # # Simplified gradient noise calculation for individual examples
+        # if logging and log_gradient_noise:
+        #     # Compute gradients for a small subset of the batch
+        #     subset_size = min(10, self.batch_size)
+        #     individual_grads = []
+        #     for i in range(subset_size):
+        #         self.critic_optimizer.zero_grad(set_to_none=True)
+        #         single_critic_loss, _ = self.update_critic(obs[i:i+1], action[i:i+1], reward[i:i+1], next_obs[i:i+1], ~done[i:i+1])
+        #         single_critic_loss.backward()
+        #         individual_grads.append(torch.cat([p.grad.flatten() for p in self.model.sac_network.critic.parameters() if p.grad is not None]))
+            
+        #     grads = torch.stack(individual_grads)
+        #     grad_mean = grads.mean(dim=0, keepdim=True)
+        #     grad_std = grads.std(dim=0, keepdim=True)
+        #     critic_loss_info['info/gradient_noise_2'] = (grad_std ** 2).mean()
+        #     critic_loss_info['info/gradient_noise_scale_2'] = (grad_std ** 2) / (grad_mean ** 2).mean()
+            
+        #     self.critic_optimizer.zero_grad(set_to_none=True)
 
         actor_loss_info = {}
         if step % self.policy_update_fraction == 0:
@@ -473,7 +493,7 @@ class SACAgent(BaseAlgorithm):
                 individual_grads = torch.cat([p.flatten(1) for p in individual_grads], 1)
                 critical_noise = torch.mean(torch.std(individual_grads, 0) ** 2) / torch.mean(torch.mean(individual_grads, 0) ** 2)
                 gradient_noise = (torch.std(individual_grads, 0) ** 2).mean()
-                actor_loss_info['info/actor_critical_noise'] = critical_noise
+                actor_loss_info['info/actor_gradient_noise_scale'] = critical_noise
                 actor_loss_info['info/actor_gradient_noise'] = gradient_noise
                 self.actor_optimizer.zero_grad(set_to_none=True)
 
@@ -705,7 +725,7 @@ class SACAgent(BaseAlgorithm):
                 print('Reset network!')
                 self.build_network()
             self.epoch_num += 1
-            logging = self.epoch_num % 1000 == 0
+            logging = self.epoch_num % self.config.get('log_frequency', 1000) == 0
             step_time, play_time, update_time, epoch_total_time, actor_metrics, critic_metrics = self.train_epoch(logging)
 
             total_time += epoch_total_time
@@ -774,16 +794,7 @@ class SACAgent(BaseAlgorithm):
                             self.save(checkpoint_name)
                             should_exit = True
 
-                    if self.epoch_num >= self.max_epochs and self.max_epochs != -1:
-                        if self.game_rewards.current_size == 0:
-                            print('WARNING: Max epochs reached before any env terminated at least once')
-                            mean_rewards = -np.inf
-
-                        self.save(checkpoint_name)
-                        print('MAX EPOCHS NUM!')
-                        should_exit = True
-
-                    if self.frame >= self.max_frames and self.max_frames != -1:
+                    if (self.frame >= self.max_frames and self.max_frames != -1) or (self.epoch_num >= self.max_epochs and self.max_epochs != -1):
                         if self.game_rewards.current_size == 0:
                             print('WARNING: Max frames reached before any env terminated at least once')
                             mean_rewards = -np.inf
