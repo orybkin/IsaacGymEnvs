@@ -28,6 +28,7 @@
 
 import numpy as np
 import os
+import pdb
 import torch
 import math
 
@@ -274,6 +275,7 @@ class Ant(VecTask):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_force_sensor_tensor(self.sim)
 
+        print(f"current obs shape {self.obs_buf.shape}")
         self.obs_buf[:], self.potentials[:], self.prev_potentials[:], self.up_vec[:], self.heading_vec[:] = compute_ant_observations(
             self.obs_buf, self.root_states, self.targets, self.potentials,
             self.inv_start_rot, self.dof_pos, self.dof_vel,
@@ -382,7 +384,7 @@ class Ant(VecTask):
 #####################################################################
 
 
-@torch.jit.script
+#@torch.jit.script
 def compute_ant_observations(obs_buf, root_states, targets, potentials,
                              inv_start_rot, dof_pos, dof_vel,
                              dof_limits_lower, dof_limits_upper, dof_vel_scale,
@@ -390,6 +392,7 @@ def compute_ant_observations(obs_buf, root_states, targets, potentials,
                              basis_vec0, basis_vec1, up_axis_idx):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, Tensor, Tensor, int) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
 
+    print(obs_buf.shape)
     torso_position = root_states[:, 0:3]
     torso_rotation = root_states[:, 3:7]
     velocity = root_states[:, 7:10]
@@ -423,4 +426,5 @@ def compute_ant_observations(obs_buf, root_states, targets, potentials,
                      dof_vel * dof_vel_scale, sensor_force_torques.view(-1, 24) * contact_force_scale, # 8, 24, 30:54
                      actions), dim=-1) # 8, 52:60
 
+    print(f"return {obs.shape}")
     return obs, potentials, prev_potentials_new, up_vec, heading_vec

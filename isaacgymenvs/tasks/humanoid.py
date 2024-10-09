@@ -29,6 +29,7 @@
 import numpy as np
 import os
 import torch
+import pdb 
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
@@ -42,6 +43,8 @@ class Humanoid(VecTask):
 
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
         self.cfg = cfg
+        self.max_episode_length = self.cfg["env"]["episodeLength"]
+        self.clip_actions = self.cfg["env"]["clipActions"]
         
         self.randomization_params = self.cfg["task"]["randomization_params"]
         self.randomize = self.cfg["task"]["randomize"]
@@ -63,9 +66,16 @@ class Humanoid(VecTask):
         self.plane_restitution = self.cfg["env"]["plane"]["restitution"]
 
         self.max_episode_length = self.cfg["env"]["episodeLength"]
+        self.success_threshold = self.cfg["env"]["successThreshold"]
 
-        self.cfg["env"]["numObservations"] = 108
+        #self.cfg["env"]["numObservations"] = 108
+        self.cfg["env"]["numObservations"] = 112 # adding actual xy and target xy
         self.cfg["env"]["numActions"] = 21
+
+        self.achieved_idx = [0, 1]
+        self.desired_idx = [3, 4]
+        self.target_name= 'targets'
+
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
 
@@ -216,12 +226,20 @@ class Humanoid(VecTask):
 
         self.extremities = to_torch([5, 8], device=self.device, dtype=torch.long)
 
-    def compute_reward(self, actions):
-        self.rew_buf[:], self.reset_buf = compute_humanoid_reward(
-            self.obs_buf,
+    
+
+    def compute_reward(self, actions, obs_buf = None):
+        if obs_buf is None: 
+            #print("INPUT OBSERVATIONS TO COMPUTE_REWARD IS EMPTY!!!!")
+            obs_buf = self.obs_buf
+            actions = self.actions
+
+       # for some reason, dims of self.rew_buf change from [n_envs, ...] to [16, n_envs, ...] at some point
+        return compute_humanoid_reward(
+            obs_buf,
             self.reset_buf,
             self.progress_buf,
-            self.actions,
+            actions,
             self.up_weight,
             self.heading_weight,
             self.potentials,
@@ -233,8 +251,18 @@ class Humanoid(VecTask):
             self.motor_efforts,
             self.termination_height,
             self.death_cost,
-            self.max_episode_length
+            self.max_episode_length,
+            self.success_threshold
         )
+        #return self.rew_buf
+
+
+    def compute_reward_stateless(self, states, raw_actions=True):
+        assert self.success_threshold > 0
+        actions = states['actions']
+        if raw_actions:
+            actions = torch.clamp(actions, -self.clip_actions, self.clip_actions)
+        return self.compute_reward(actions, states['obs'])[0]
 
     def compute_observations(self):
         self.gym.refresh_dof_state_tensor(self.sim)
@@ -243,6 +271,7 @@ class Humanoid(VecTask):
         self.gym.refresh_force_sensor_tensor(self.sim)
 
         self.gym.refresh_dof_force_tensor(self.sim)
+        #print(f"current obs shape {self.obs_buf.shape}")
         self.obs_buf[:], self.potentials[:], self.prev_potentials[:], self.up_vec[:], self.heading_vec[:] = compute_humanoid_observations(
             self.obs_buf, self.root_states, self.targets, self.potentials,
             self.inv_start_rot, self.dof_pos, self.dof_vel, self.dof_force_tensor,
@@ -293,7 +322,11 @@ class Humanoid(VecTask):
             self.reset_idx(env_ids)
 
         self.compute_observations()
-        self.compute_reward(self.actions)
+        self.rew_buf[:], self.reset_buf = self.compute_reward(self.actions)
+
+        self.reset_buf[:] = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
+
+        self.done = self.reset_buf.clone() 
 
         # debug viz
         if self.viewer and self.debug_viz:
@@ -337,39 +370,55 @@ def compute_humanoid_reward(
     motor_efforts,
     termination_height,
     death_cost,
-    max_episode_length
+    max_episode_length, 
+    success_threshold
 ):
-    # type: (Tensor, Tensor, Tensor, Tensor, float, float, Tensor, Tensor, float, float, float, float, Tensor, float, float, float) -> Tuple[Tensor, Tensor]
+    # type: (Tensor, Tensor, Tensor, Tensor, float, float, Tensor, Tensor, float, float, float, float, Tensor, float, float, float, float) -> Tuple[Tensor, Tensor]
 
+    #if (obs_buf.shape[0] == 16): 
+    #    pdb.set_trace()
     # reward from the direction headed
-    heading_weight_tensor = torch.ones_like(obs_buf[:, 11]) * heading_weight
-    heading_reward = torch.where(obs_buf[:, 11] > 0.8, heading_weight_tensor, heading_weight * obs_buf[:, 11] / 0.8)
+    heading_weight_tensor = torch.ones_like(obs_buf[..., 11]) * heading_weight
+    heading_reward = torch.where(obs_buf[..., 11] > 0.8, heading_weight_tensor, heading_weight * obs_buf[..., 11] / 0.8)
 
     # reward for being upright
     up_reward = torch.zeros_like(heading_reward)
-    up_reward = torch.where(obs_buf[:, 10] > 0.93, up_reward + up_weight, up_reward)
+    up_reward = torch.where(obs_buf[..., 10] > 0.93, up_reward + up_weight, up_reward)
 
     actions_cost = torch.sum(actions ** 2, dim=-1)
+    alive_reward = torch.ones_like(up_reward) * 0.5 
+
+    # task reward for goal conditioned humanoid  
+    task_reward = torch.zeros_like(obs_buf[..., 0])
+    progress_reward = torch.zeros_like(obs_buf[..., 0])
+    if success_threshold > 0: 
+        to_target = obs_buf[..., 2:4] - obs_buf[..., 0:2]
+        success = torch.norm(to_target, p = 2, dim = -1) < success_threshold 
+        task_reward = success.to(torch.float) 
+       
+    else: 
+        #alive_reward = torch.ones_like(potentials) * 2.0
+        
+        progress_reward = potentials - prev_potentials
+
 
     # energy cost reward
     motor_effort_ratio = motor_efforts / max_motor_effort
-    scaled_cost = joints_at_limit_cost_scale * (torch.abs(obs_buf[:, 12:33]) - 0.98) / 0.02
-    dof_at_limit_cost = torch.sum((torch.abs(obs_buf[:, 12:33]) > 0.98) * scaled_cost * motor_effort_ratio.unsqueeze(0), dim=-1)
+    scaled_cost = joints_at_limit_cost_scale * (torch.abs(obs_buf[..., 12:33]) - 0.98) / 0.02
+    dof_at_limit_cost = torch.sum((torch.abs(obs_buf[..., 12:33]) > 0.98) * scaled_cost * motor_effort_ratio.unsqueeze(0), dim=-1)
 
-    electricity_cost = torch.sum(torch.abs(actions * obs_buf[:, 33:54]) * motor_effort_ratio.unsqueeze(0), dim=-1)
+    electricity_cost = torch.sum(torch.abs(actions * obs_buf[..., 33:54]) * motor_effort_ratio.unsqueeze(0), dim=-1)
 
     # reward for duration of being alive
-    alive_reward = torch.ones_like(potentials) * 2.0
-    progress_reward = potentials - prev_potentials
 
-    total_reward = progress_reward + alive_reward + up_reward + heading_reward - \
+    total_reward = task_reward + alive_reward + up_reward + heading_reward - \
         actions_cost_scale * actions_cost - energy_cost_scale * electricity_cost - dof_at_limit_cost
 
     # adjust reward for fallen agents
-    total_reward = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
+    total_reward = torch.where(obs_buf[..., 0] < termination_height, torch.ones_like(total_reward) * death_cost, total_reward)
 
     # reset agents
-    reset = torch.where(obs_buf[:, 0] < termination_height, torch.ones_like(reset_buf), reset_buf)
+    reset = torch.where(obs_buf[..., 0] < termination_height, torch.ones_like(reset_buf), reset_buf)
     reset = torch.where(progress_buf >= max_episode_length - 1, torch.ones_like(reset_buf), reset)
 
     return total_reward, reset
@@ -382,13 +431,15 @@ def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv
                                   basis_vec0, basis_vec1):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, Tensor, float, Tensor, Tensor, float, float, float, Tensor, Tensor) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]
 
+    #pdb.set_trace()
+    #print(obs_buf.shape)
     torso_position = root_states[:, 0:3]
     torso_rotation = root_states[:, 3:7]
     velocity = root_states[:, 7:10]
     ang_velocity = root_states[:, 10:13]
 
     to_target = targets - torso_position
-    to_target[:, 2] = 0
+    to_target[:, 2] = 0 # don't worry about z axis delta 
 
     prev_potentials_new = potentials.clone()
     potentials = -torch.norm(to_target, p=2, dim=-1) / dt
@@ -405,9 +456,10 @@ def compute_humanoid_observations(obs_buf, root_states, targets, potentials, inv
     dof_pos_scaled = unscale(dof_pos, dof_limits_lower, dof_limits_upper)
 
     # obs_buf shapes: 1, 3, 3, 1, 1, 1, 1, 1, num_dofs (21), num_dofs (21), 6, num_acts (21)
-    obs = torch.cat((torso_position[:, 2].view(-1, 1), vel_loc, angvel_loc * angular_velocity_scale,
+    obs = torch.cat((torso_position[:, :2], to_target[:, :2], torso_position[:, 2].view(-1, 1), vel_loc, angvel_loc * angular_velocity_scale,
                      yaw, roll, angle_to_target, up_proj.unsqueeze(-1), heading_proj.unsqueeze(-1),
                      dof_pos_scaled, dof_vel * dof_vel_scale, dof_force * contact_force_scale,
                      sensor_force_torques.view(-1, 12) * contact_force_scale, actions), dim=-1)
+    #print(f"return {obs.shape}")
 
     return obs, potentials, prev_potentials_new, up_vec, heading_vec

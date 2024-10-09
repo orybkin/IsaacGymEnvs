@@ -14,7 +14,8 @@ root_dir = os.path.dirname(os.path.realpath(__file__))
 # Minimum dependencies required prior to installation
 INSTALL_REQUIRES = [
     # RL
-    "gym==0.23.1",
+    "gym>=0.23.1",
+    #"mujoco-py==2.0.2.5",
     "torch",
     "omegaconf",
     "termcolor",
@@ -24,11 +25,28 @@ INSTALL_REQUIRES = [
     "pyvirtualdisplay",
     "moviepy",
     "stable_baselines==2.0.0",
+    "gymnasium_robotics",
+    "ml_collections",
+    "cython<3",
+    "gymnasium==0.28.1",
+    "tensorboardx==2.6.2.2",
+    ]
+INSTALL_REQUIRES = [
+    # RL
+    "gym==0.23.1",
+    "torch",
+    "omegaconf",
+    "termcolor",
+    "jinja2",
+    "hydra-core>=1.1",
+    "rl-games>=1.6.0",
+    "pyvirtualdisplay",
+    "moviepy",
+    "stable_baselines",
     "gymnasium_robotics[mujoco]",
     "ml_collections",
     "cython<3"
-    "gymnasium==3.3.0",
-    "tensorboardx==2.6.2.2",
+    # "gymnasium==3.3.0",
     ]
 
 

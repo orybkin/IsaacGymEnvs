@@ -1,0 +1,3 @@
+#!/bin/bash
+
+python clean_awr/awr.py --slurm_job_id=19737600 --agent=clean_awr/agent_config/humanoid.py --env=clean_awr/env_config/humanoid.py --agent.experiment=mthumanoid2_rawr_densegoals --agent.relabel=$3 --env.env.successThreshold=0.2 --env.env.goalNoise=10 --agent.bounds_loss_coef=1e-2 --agent.critic_coef=100 --env.env.goalOffset=1.5 --agent.device=cuda:$1 --agent.graphics_device_id="$2" 

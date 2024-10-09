@@ -9,6 +9,7 @@ ig_push_config = ml_collections.ConfigDict({
     "env": {
         'numEnvs': 0,
         "envSpacing": 1.5,
+        "binRadius": 0.15, #default
         "episodeLength": 256,
         "enableDebugVis": False,
         "clipObservations": 5.0,

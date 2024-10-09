@@ -81,7 +81,7 @@ class FrankaPushing(VecTask):
         self.max_episode_length = self.cfg["env"]["episodeLength"]
 
         self.action_scale = self.cfg["env"]["actionScale"]
-        self.bin_radius = 0.15
+        self.bin_radius = self.cfg["env"]["binRadius"]
         # self.goal_position_noise = self.bin_radius - 0.03
         self.goal_position_noise = self.cfg["env"]["goalPositionNoise"]
         self.start_position_noise = self.cfg["env"]["startPositionNoise"]

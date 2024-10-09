@@ -69,9 +69,12 @@ class AWRAgent():
     def __init__(self, config, algo_observer):
         self.config = config
 
+        pdb.set_trace()
         # Make env.
         self.vec_env = vecenv.create_vec_env('rlgpu', self.config['num_actors'])
+
         self.env_info = self.vec_env.get_env_info()
+        pdb.set_trace()
 
         # Assign some configuration things.
         self.device = config['device']
@@ -255,6 +258,7 @@ class AWRAgent():
         obs = relabeled_buffer.tensor_dict['obses']
         idx = self.get_relabel_idx(env, relabeled_buffer.tensor_dict['dones'])
         next_achieved = obs[..., env.achieved_idx]
+        
         # Set desired goal to achieved goal at a future state
         onpolicy_desired = obs[:, :, env.desired_idx]
         a = self.config['goal_interpolation']
@@ -541,6 +545,7 @@ class AWRAgent():
         total_time = 0
         rep_count = 0
         self.obs = self.env_reset()
+        #print(f"Initial observation: {self.obs}")
         self.curr_frames = self.batch_size_envs
         self.vec_env.env.start_epoch_num = self.epoch_num
         test_check = Every(self.config['test_every_episodes'] * self.vec_env.env.max_episode_length)
@@ -619,6 +624,7 @@ class AWRAgent():
             if self.config['relabel']:
                 self.set_eval()
                 relabeled_buffer, relabeled_batch = self.relabel_batch(self.experience_buffer)
+
             self.set_train()
             self.curr_frames = batch_dict.pop('played_frames')
 
@@ -736,6 +742,7 @@ def main(_):
     FLAGS.env['env']['numEnvs'] = FLAGS.agent['num_envs']
 
     def create_isaacgym_env(**kwargs):
+        print(f'env name: {FLAGS.env["name"]}')
         envs = isaacgymenvs.make(
             -1, # seed 
             FLAGS.env['name'], 
@@ -770,7 +777,7 @@ def main(_):
         env['sim'] = dict(env['sim'])
     wandb.init(
         project='taskmaster',
-        entity='oleh-rybkin',
+        entity='kranganathan',
         group='Default',
         sync_tensorboard=True,
         id=run_name,
@@ -784,7 +791,10 @@ def main(_):
 
 if __name__ == '__main__':
     flags.DEFINE_integer('slurm_job_id', -1, '')
-    config_flags.DEFINE_config_file('agent', 'clean_awr/agent_config/ig_push.py', 'Agent configuration.', lock_config=False)
-    config_flags.DEFINE_config_file('env', 'clean_awr/env_config/ig_push.py', 'Env configuration.', lock_config=False)
+    config_flags.DEFINE_config_file('agent', 'clean_awr/agent_config/ant.py', 'Agent configuration.', lock_config=False)
+    config_flags.DEFINE_config_file('env', 'clean_awr/env_config/ant.py', 'Env configuration.', lock_config=False)
+
+    #config_flags.DEFINE_config_file('agent', 'clean_awr/agent_config/ig_push.py', 'Agent configuration.', lock_config=False)
+    #config_flags.DEFINE_config_file('env', 'clean_awr/env_config/ig_push.py', 'Env configuration.', lock_config=False)
 
     app.run(main)
