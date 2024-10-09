@@ -674,6 +674,11 @@ class SACAgent(BaseAlgorithm):
 
             self.replay_buffer.add(obs, action, torch.unsqueeze(rewards, 1), next_obs, torch.unsqueeze(terminated, 1), torch.unsqueeze(dones, 1))
 
+            # log new data TD error
+            with torch.no_grad():
+                critic_loss, critic_loss_info = self.update_critic(obs, action, torch.unsqueeze(rewards, 1), next_obs, ~torch.unsqueeze(terminated.bool(), 1))
+                self.critic_metrics['info/new_data_c_loss'].append(critic_loss.mean().detach())
+
             if self.training_now() and not random_exploration:
                 self.set_train()
                 update_time_start = time.time()
