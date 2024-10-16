@@ -6,7 +6,7 @@ humanoid_config = ml_collections.ConfigDict({
     'num_envs': 32768,
     'clip_observations': 5.0,
     'clip_actions': 1,
-    'hidden_dims': (256, 128, 64),
+    'hidden_dims': (512,256, 64),
     'separate': False,
     'temperature': 0.2, # 0 for behavior cloning.
     'horizon_length': 16,

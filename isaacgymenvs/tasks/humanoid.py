@@ -78,6 +78,9 @@ class Humanoid(VecTask):
 
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
+        if self.enable_camera_sensors: 
+            self.cams = []
+            self.cam_tensors = [] 
 
         if self.viewer != None:
             cam_pos = gymapi.Vec3(50.0, 25.0, 2.4)
@@ -126,6 +129,7 @@ class Humanoid(VecTask):
         self.potentials = to_torch([-1000./self.dt], device=self.device).repeat(self.num_envs)
         self.prev_potentials = self.potentials.clone()
 
+
     def create_sim(self):
         self.up_axis_idx = 2 # index of up axis: Y=1, Z=2
         self.sim = super().create_sim(self.device_id, self.graphics_device_id, self.physics_engine, self.sim_params)
@@ -137,6 +141,34 @@ class Humanoid(VecTask):
         if self.randomize:
             self.apply_randomizations(self.randomization_params)
 
+    def _compute_pixel_obs_save(self):
+        """Save images for debugging"""
+        img = []
+        self.gym.render_all_camera_sensors(self.sim)
+        self.gym.start_access_image_tensors(self.sim)
+        for i in range(min(self.num_envs, self.max_pix)):
+            crop_l = (self.cam_w - self.im_size) // 2
+            crop_r = crop_l + self.im_size
+            img.append(self.cam_tensors[i][:, crop_l:crop_r, :3].cpu().numpy())
+        self.gym.end_access_image_tensors(self.sim)
+
+        # save images
+        import imageio
+        img = np.array(img)
+        assert img.shape == (16, self.im_size, self.im_size, 3)
+        img = img.reshape(4, 4, self.im_size, self.im_size, 3)
+        img = img.transpose(0, 2, 1, 3, 4).reshape(4*self.im_size, 4*self.im_size, 3)
+        imageio.imwrite("render.png", img)
+
+    def compute_pixel_obs(self):
+        self.gym.render_all_camera_sensors(self.sim)
+        self.gym.start_access_image_tensors(self.sim)
+        for i in range(min(self.num_envs, self.max_pix)):
+            crop_l = (self.cam_w - self.im_size) // 2
+            crop_r = crop_l + self.im_size
+            self.pix_buf[i] = self.cam_tensors[i][:, crop_l:crop_r, :3].permute(2, 0, 1).float() / 255.
+            # self.obs_buf[i] = (self.obs_buf[i] - self.im_mean) / self.im_std
+        self.gym.end_access_image_tensors(self.sim)
     def _create_ground_plane(self):
         plane_params = gymapi.PlaneParams()
         plane_params.normal = gymapi.Vec3(0.0, 0.0, 1.0)
@@ -208,7 +240,22 @@ class Humanoid(VecTask):
             for j in range(self.num_bodies):
                 self.gym.set_rigid_body_color(
                     env_ptr, handle, j, gymapi.MESH_VISUAL, gymapi.Vec3(0.97, 0.38, 0.06))
+            
+            if self.enable_camera_sensors and i < self.max_pix: 
+                pdb.set_trace()
+                print("Humanoid initializing camera") 
+                cam_props = gymapi.CameraProperties()
+                cam_props.width = self.cam_w 
+                cam_props.height = self.cam_w 
+                cam_props.enable_tensors = True 
+                cam_handle = self.gym.create_camera_sensor(env_ptr, cam_props) 
+                self.gym.set_camera_location(cam_handle, env_ptr, gymapi.Vec3(0.12, 0, 1.25), gymapi.Vec3(0, 0, 1))
 
+                cam_tensor = self.gym.get_camera_image_gpu_tensor(self.sim, env_ptr, cam_handle, gymapi.IMAGE_COLOR)
+                cam_tensor_th = gymtorch.wrap_tensor(cam_tensor)
+                self.cam_tensors.append(cam_tensor_th)
+
+ 
             self.envs.append(env_ptr)
             self.humanoid_handles.append(handle)
 
@@ -226,7 +273,7 @@ class Humanoid(VecTask):
 
         self.extremities = to_torch([5, 8], device=self.device, dtype=torch.long)
 
-    
+       
 
     def compute_reward(self, actions, obs_buf = None):
         if obs_buf is None: 
@@ -327,6 +374,19 @@ class Humanoid(VecTask):
         self.reset_buf[:] = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
 
         self.done = self.reset_buf.clone() 
+        if 'images' in self.extras: 
+            self.extras.pop('images')
+        if self._do_override_render: 
+            self.override_render = True 
+        if self.render_this_step(): 
+            self.compute_pixel_obs()
+            self.extras["images"] = self.pix_buf
+
+            # Add success marker
+            marker_size = self.im_size // 32
+            success = (torch.norm(self.states["goal_pos"] - self.states[self.target_name], dim=-1) < 0.02)[:self.max_pix]
+            self.extras["images"][:,:,:marker_size,:marker_size] = torch.tensor([0., 0., 0.], device=self.device)[None, :, None,None]
+            self.extras["images"][success,:,:marker_size,:marker_size] = torch.tensor([0., 0.75, 0.], device=self.device)[None, :, None,None]
 
         # debug viz
         if self.viewer and self.debug_viz:

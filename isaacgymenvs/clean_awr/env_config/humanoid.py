@@ -25,6 +25,7 @@ humanoid_config = ml_collections.ConfigDict({
         "terminationHeight": 0.8,
         "successThreshold": 0.0,
         "goalNoise": 100.0,
+        "renderEveryEpisodes": 1000,
         "goalOffset": 0.0,
         "plane": {
             "staticFriction": 1.0,
@@ -35,7 +36,7 @@ humanoid_config = ml_collections.ConfigDict({
             "assetFileName": "mjcf/nv_humanoid.xml",
         },
         # "enableCameraSensors": True,
-        "enableCameraSensors": False,
+        "enableCameraSensors": True,
     },
     "sim": {
         "dt": 0.0166,  # 1/60
