@@ -219,6 +219,7 @@ class VectorizedReplayBuffer:
         self.actions = torch.empty((capacity, *action_shape), dtype=self.dtype, device=self.device)
         self.rewards = torch.empty((capacity, 1), dtype=self.dtype, device=self.device)
         self.dones = torch.empty((capacity, 1), dtype=torch.bool, device=self.device)
+        self.data = [self.obses, self.actions, self.rewards, self.next_obses, self.dones]
 
         self.capacity = capacity
         self.idx = 0
@@ -287,7 +288,93 @@ class VectorizedReplayBuffer:
         return obses, actions, rewards, next_obses, dones
 
 
+class ValidationReplayBuffer:
+    def __init__(self, obs_shape, action_shape, capacity, n_envs, device, validation_ratio=0.0, precision='float32'):
+        """Create Vectorized Replay buffer.
+        Parameters
+        ----------
+        size: int
+            Max number of transitions to store in the buffer. When the buffer
+            overflows the old memories are dropped.
+        See Also
+        --------
+        ReplayBuffer.__init__
+        """
 
+        self.device = device
+        self.dtype = torch.float32 if precision == 'float32' else torch.float16
+        self.n_steps = capacity // n_envs
+        self.n_envs = n_envs
+        self.val_envs = int(n_envs * validation_ratio)
+        self.train_envs = n_envs - self.val_envs
+        assert capacity == self.n_steps * n_envs
+
+        self.obses = torch.empty((self.n_steps, self.n_envs, *obs_shape), dtype=self.dtype, device=self.device)
+        self.next_obses = torch.empty((self.n_steps, self.n_envs, *obs_shape), dtype=self.dtype, device=self.device)
+        self.actions = torch.empty((self.n_steps, self.n_envs, *action_shape), dtype=self.dtype, device=self.device)
+        self.rewards = torch.empty((self.n_steps, self.n_envs, 1), dtype=self.dtype, device=self.device)
+        self.dones = torch.empty((self.n_steps, self.n_envs, 1), dtype=torch.bool, device=self.device)
+        self.data = [self.obses, self.actions, self.rewards, self.next_obses, self.dones]
+
+        self.capacity = capacity
+        self.idx = 0
+        self.full = False
+
+    @property
+    def size(self):
+        return self.n_steps * self.n_envs if self.full else self.idx * self.n_envs
+    
+    @property
+    def train_data(self):
+        return [l[:, :self.train_envs] for l in self.data]
+    
+    @property
+    def val_data(self):
+        return [l[:, self.train_envs:] for l in self.data]
+
+    def add(self, obs, action, reward, next_obs, terminated, done):
+        for x, y in zip(self.data, [obs, action, reward, next_obs, terminated]):
+            if y.dtype == torch.float32: y = y.to(self.dtype)
+            x[self.idx] = y
+        
+        self.idx = (self.idx + 1) % self.n_steps
+        self.full = self.full or self.idx == 0
+
+    def sample(self, batch_size, validation=False):
+        """Sample a batch of experiences.
+        Parameters
+        ----------
+        batch_size: int
+            How many transitions to sample.
+        Returns
+        -------
+        obses: torch tensor
+            batch of observations
+        actions: torch tensor
+            batch of actions executed given obs
+        rewards: torch tensor
+            rewards received as results of executing act_batch
+        next_obses: torch tensor
+            next set of observations seen after executing act_batch
+        not_dones: torch tensor
+            inverse of whether the episode ended at this tuple of (observation, action) or not
+        not_dones_no_max: torch tensor
+            inverse of whether the episode ended at this tuple of (observation, action) or not, specifically exlcuding maximum episode steps
+        """
+        if not validation:
+            data = self.train_data
+            n_envs = self.train_envs
+        else:
+            data = self.val_data
+            n_envs = self.val_envs
+
+        current_size = self.n_steps * n_envs if self.full else self.idx * n_envs
+        idxs = torch.randint(0, current_size // n_envs, (batch_size, 2), device=self.device)
+        idxs[:, 1] = torch.randint(0, n_envs, (batch_size,), device=self.device)
+        data = [l[idxs[:, 0], idxs[:, 1]] for l in data]
+        for i in range(4): data[i] = data[i].to(torch.float32)
+
+        return data
 
 
 class ExperienceBuffer:

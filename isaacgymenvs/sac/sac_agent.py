@@ -91,11 +91,13 @@ class SACAgent(BaseAlgorithm):
                                                             self.validation_ratio,
                                                             self.rb_precision)
         else:
-            self.replay_buffer = experience.VectorizedReplayBuffer(self.env_info['observation_space'].shape,
-                                                                self.env_info['action_space'].shape,
-                                                                self.replay_buffer_size,
-                                                                self._device,
-                                                                self.rb_precision)
+            self.replay_buffer = experience.ValidationReplayBuffer(self.env_info['observation_space'].shape,
+                                                                   self.env_info['action_space'].shape,
+                                                                   self.replay_buffer_size,
+                                                                   self.num_actors,
+                                                                   self._device,
+                                                                   self.validation_ratio,
+                                                                   self.rb_precision)
         
         self.target_entropy_coef = config.get("target_entropy_coef", 1.0)
         self.target_entropy = self.target_entropy_coef * -self.env_info['action_space'].shape[0]
@@ -527,10 +529,12 @@ class SACAgent(BaseAlgorithm):
         
         info = {'val/a_loss': actor_loss_info['losses/a_loss'],
                 'val/actor_q': actor_loss_info['info/actor_q'],
-                'val/actor_q_relabeled': actor_loss_info['info/actor_q_relabeled'],
-                'val/c_loss': critic_loss_info['losses/c_loss'],
-                'val/c_loss_original': critic_loss_info['losses/c_loss_original'],
-                'val/c_loss_relabeled': critic_loss_info['losses/c_loss_relabeled'],}
+                'val/c_loss': critic_loss_info['losses/c_loss']}
+        
+        if self.relabel_ratio > 0:
+            info['val/actor_q_relabeled'] = actor_loss_info['info/actor_q_relabeled']
+            info['val/c_loss_relabeled'] = critic_loss_info['losses/c_loss_relabeled']
+            info['val/c_loss_original'] = critic_loss_info['losses/c_loss_original']
 
         return info
 
