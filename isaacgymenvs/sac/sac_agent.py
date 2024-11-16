@@ -124,9 +124,10 @@ class SACAgent(BaseAlgorithm):
                                                           lr=float(self.config['actor_lr']),
                                                           betas=self.config.get("actor_betas", [0.9, 0.999]))
 
-        self.critic_optimizer = torch.optim.Adam(self.model.sac_network.critic.parameters(),
+        self.critic_optimizer = torch.optim.AdamW(self.model.sac_network.critic.parameters(),
                                                  lr=float(self.config["critic_lr"]),
-                                                 betas=self.config.get("critic_betas", [0.9, 0.999]))
+                                                 betas=self.config.get("critic_betas", [0.9, 0.999]),
+                                                 weight_decay=self.config.get("weight_decay", 0.0))
 
         self.log_alpha_optimizer = torch.optim.Adam([self.log_alpha],
                                                     lr=float(self.config["alpha_lr"]),
