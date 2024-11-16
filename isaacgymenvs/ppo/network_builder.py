@@ -85,47 +85,6 @@ class NetworkBuilder:
             if name == 'gru':
                 return GRUWithDones(input_size=input, hidden_size=units, num_layers=layers)
 
-        def _build_sequential_mlp(self, 
-        input_size, 
-        units, 
-        activation,
-        dense_func,
-        norm_only_first_layer=False, 
-        norm_func_name = None):
-            print('build mlp:', input_size)
-            in_size = input_size
-            layers = []
-            need_norm = True
-            for unit in units:
-                layers.append(dense_func(in_size, unit))
-                layers.append(self.activations_factory.create(activation))
-
-                if not need_norm:
-                    continue
-                if norm_only_first_layer and norm_func_name is not None:
-                   need_norm = False 
-                if norm_func_name == 'layer_norm':
-                    layers.append(torch.nn.LayerNorm(unit))
-                elif norm_func_name == 'batch_norm':
-                    layers.append(torch.nn.BatchNorm1d(unit))
-                in_size = unit
-
-            return nn.Sequential(*layers)
-
-        def _build_mlp(self, 
-        input_size, 
-        units, 
-        activation,
-        dense_func, 
-        norm_only_first_layer=False,
-        norm_func_name = None,
-        d2rl=False):
-            if d2rl:
-                act_layers = [self.activations_factory.create(activation) for i in range(len(units))]
-                return D2RLNet(input_size, units, act_layers, norm_func_name)
-            else:
-                return self._build_sequential_mlp(input_size, units, activation, dense_func, norm_func_name=norm_func_name)
-
         def _build_conv(self, ctype, **kwargs):
             print('conv_name:', ctype)
 
@@ -833,6 +792,18 @@ class DiagGaussianActor(NetworkBuilder.BaseNetwork):
         self.trunk = self._build_mlp(**mlp_args)
         self.trunk = nn.Sequential(*list(self.trunk.children()), nn.Linear(mlp_args['units'][-1], output_dim))
 
+    def _build_mlp(self, input_size, units, activation, dense_func):
+        print('build mlp:', input_size)
+        in_size = input_size
+        layers = []
+        for unit in units:
+            layers.append(dense_func(in_size, unit))
+            layers.append(self.activations_factory.create(activation))
+            layers.append(torch.nn.LayerNorm(unit))
+            in_size = unit
+
+        return nn.Sequential(*layers)
+
     def forward(self, obs):
         mu, log_std = self.trunk(obs).chunk(2, dim=-1)
 
@@ -850,19 +821,76 @@ class DiagGaussianActor(NetworkBuilder.BaseNetwork):
         # Modify to only return mu and std
         return dist
 
+# class DoubleQCritic(NetworkBuilder.BaseNetwork):
+#     """Critic network, employs double Q-learning with categorical outputs."""
+#     def __init__(self, output_dim, num_bins=100, v_min=-10, v_max=110, **mlp_args):
+#         super().__init__()
+#         self.num_bins = num_bins
+#         self.v_min = v_min
+#         self.v_max = v_max
+
+#         self.Q1 = self._build_mlp(**mlp_args)
+#         self.Q1 = nn.Sequential(*list(self.Q1.children()), nn.Linear(mlp_args['units'][-1], num_bins))
+
+#         self.Q2 = self._build_mlp(**mlp_args)
+#         self.Q2 = nn.Sequential(*list(self.Q2.children()), nn.Linear(mlp_args['units'][-1], num_bins))
+
+#         # Register buffer for bin centers
+#         bin_width = (v_max - v_min) / num_bins
+#         bin_centers = torch.linspace(v_min + bin_width / 2, v_max - bin_width / 2, num_bins)
+#         self.register_buffer('bin_centers', bin_centers)
+
+#     def predict(self, obs, action):
+#         assert obs.size(0) == action.size(0)
+
+#         obs_action = torch.cat([obs, action], dim=-1)
+        
+#         q1_logits = self.Q1(obs_action)
+#         q1_probs = F.softmax(q1_logits, dim=-1)
+#         q1_value = (q1_probs * self.bin_centers).sum(dim=-1, keepdim=True)
+
+#         q2_logits = self.Q2(obs_action)
+#         q2_probs = F.softmax(q2_logits, dim=-1)
+#         q2_value = (q2_probs * self.bin_centers).sum(dim=-1, keepdim=True)
+
+#         return (q1_logits, q1_value), (q2_logits, q2_value)
+    
+#     def forward(self, obs, action):
+#         return list(zip(*self.predict(obs, action)))[1]
+
+#     def _build_mlp(self, input_size, units, activation, dense_func):
+#         print('build mlp:', input_size)
+#         in_size = input_size
+#         layers = []
+#         for unit in units:
+#             layers.append(dense_func(in_size, unit))
+#             layers.append(self.activations_factory.create(activation))
+#             layers.append(torch.nn.LayerNorm(unit))
+#             in_size = unit
+
+#         return nn.Sequential(*layers)
+
+
 class DoubleQCritic(NetworkBuilder.BaseNetwork):
     """Critic network, employs double Q-learning with categorical outputs."""
-    def __init__(self, output_dim, num_bins=100, v_min=-10, v_max=110, **mlp_args):
+    def __init__(self, output_dim, simba, num_bins=100, v_min=-10, v_max=110, **mlp_args):
         super().__init__()
-        self.num_bins = num_bins
+        self.simba = simba
+        self.num_bins = num_bins    
         self.v_min = v_min
         self.v_max = v_max
 
-        self.Q1 = self._build_mlp(**mlp_args)
-        self.Q1 = nn.Sequential(*list(self.Q1.children()), nn.Linear(mlp_args['units'][-1], num_bins))
+        if simba:   
+            self.Q1 = self._build_simba(**mlp_args)
+        else:
+            self.Q1 = self._build_mlp(**mlp_args)
+        self.Q1.append(nn.Linear(mlp_args['units'][-1], num_bins))
 
-        self.Q2 = self._build_mlp(**mlp_args)
-        self.Q2 = nn.Sequential(*list(self.Q2.children()), nn.Linear(mlp_args['units'][-1], num_bins))
+        if simba:
+            self.Q2 = self._build_simba(**mlp_args)
+        else:
+            self.Q2 = self._build_mlp(**mlp_args)
+        self.Q2.append(nn.Linear(mlp_args['units'][-1], num_bins))
 
         # Register buffer for bin centers
         bin_width = (v_max - v_min) / num_bins
@@ -884,9 +912,46 @@ class DoubleQCritic(NetworkBuilder.BaseNetwork):
 
         return (q1_logits, q1_value), (q2_logits, q2_value)
     
+    def _build_mlp(self, input_size, units, activation, dense_func):
+        print('build mlp:', input_size)
+        in_size = input_size
+        layers = []
+        for unit in units:
+            layers.append(dense_func(in_size, unit))
+            layers.append(self.activations_factory.create(activation))
+            layers.append(torch.nn.LayerNorm(unit))
+            in_size = unit
+
+        return nn.Sequential(*layers)
+
+    def _build_simba(self, input_size, units, activation, dense_func):
+        net = nn.Sequential()
+        net.append(nn.Linear(input_size, units[0]))
+        for i in range(len(units) - 1):
+            net.append(SimbaBlock(units[i], units[i+1]))
+        net.append(torch.nn.LayerNorm(units[-1]))
+        return net
+
     def forward(self, obs, action):
         return list(zip(*self.predict(obs, action)))[1]
                     
+
+class SimbaBlock(nn.Module):
+    # Residual block (https://arxiv.org/pdf/2410.09754)
+    def __init__(self, main_dim, hidden_dim):
+        super(SimbaBlock, self).__init__()
+        self.ln1 = nn.LayerNorm(main_dim)
+        self.fc1 = nn.Linear(main_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, main_dim)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        out = self.ln1(x)
+        out = self.fc1(out)
+        out = self.relu(out)
+        out = self.fc2(out)
+        return x + out
+    
 
 class SACBuilder(NetworkBuilder):
     def __init__(self, **kwargs):
@@ -913,22 +978,16 @@ class SACBuilder(NetworkBuilder):
 
             actor_mlp_args = {
                 'input_size' : obs_dim, 
-                'units' : self.units, 
+                'units' : self.actor_units, 
                 'activation' : self.activation, 
-                'norm_func_name' : self.normalization,
                 'dense_func' : torch.nn.Linear,
-                'd2rl' : self.is_d2rl,
-                'norm_only_first_layer' : self.norm_only_first_layer
             }
 
             critic_mlp_args = {
                 'input_size' : obs_dim + action_dim, 
-                'units' : self.units, 
+                'units' : self.critic_units, 
                 'activation' : self.activation, 
-                'norm_func_name' : self.normalization,
                 'dense_func' : torch.nn.Linear,
-                'd2rl' : self.is_d2rl,
-                'norm_only_first_layer' : self.norm_only_first_layer
             }
             print("Building Actor")
             self.actor = self._build_actor(2*action_dim, self.log_std_bounds, **actor_mlp_args)
@@ -940,6 +999,7 @@ class SACBuilder(NetworkBuilder):
                 print("Building Critic Target")
                 self.critic_target = self._build_critic(1, **critic_mlp_args)
                 self.critic_target.load_state_dict(self.critic.state_dict())  
+            # import pdb; pdb.set_trace()
 
             mlp_init = self.init_factory.create(**self.initializer)
             for m in self.modules():
@@ -953,7 +1013,7 @@ class SACBuilder(NetworkBuilder):
                         torch.nn.init.zeros_(m.bias)
 
         def _build_critic(self, output_dim, **mlp_args):
-            return DoubleQCritic(output_dim, **mlp_args)
+            return DoubleQCritic(output_dim, self.simba, **mlp_args)
 
         def _build_actor(self, output_dim, log_std_bounds, **mlp_args):
             return DiagGaussianActor(output_dim, log_std_bounds, **mlp_args)
@@ -968,8 +1028,10 @@ class SACBuilder(NetworkBuilder):
             return self.separate
 
         def load(self, params):
+            self.simba = params.get('simba', False)
             self.separate = params.get('separate', True)
-            self.units = params['mlp']['units']
+            self.actor_units = params['mlp']['actor_units']
+            self.critic_units = params['mlp']['critic_units']
             self.activation = params['mlp']['activation']
             self.initializer = params['mlp']['initializer']
             self.is_d2rl = params['mlp'].get('d2rl', False)

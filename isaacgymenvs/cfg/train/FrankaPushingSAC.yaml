@@ -9,11 +9,13 @@ params:
   network:
     name: soft_actor_critic
     separate: True
+    simba: False
 
     space:
       continuous:
     mlp:
-      units: [256, 128, 64]
+      actor_units: [1024, 1024, 1024]
+      critic_units: [1024, 1024, 1024]
       activation: relu
 
       initializer:
@@ -33,7 +35,8 @@ params:
     normalize_input: True
     reward_shaper:
       scale_value: 1.0
-    max_frames: 10_000_000_000
+    max_frames: 1_000_000_000
+    max_epochs: -1
     mixed_precision: False
     rb_precision: float32
     fill_buffer_first: False
@@ -46,6 +49,7 @@ params:
     save_frequency: 1000
     test_every_episodes: 10
     validation_ratio: 0.0
+    log_frequency: 1000
 
     batch_size: 4096
     alpha_lr: 0.005
