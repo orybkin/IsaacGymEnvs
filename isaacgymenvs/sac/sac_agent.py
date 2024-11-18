@@ -519,6 +519,10 @@ class SACAgent(BaseAlgorithm):
 
         self.soft_update_params(self.model.sac_network.critic, self.model.sac_network.critic_target,
                                      self.critic_tau)
+        for key, value in actor_loss_info.items():
+            actor_loss_info[key] = value.detach()
+        for key, value in critic_loss_info.items():
+            critic_loss_info[key] = value.detach()
         return actor_loss_info, critic_loss_info
 
     def validate(self):  
