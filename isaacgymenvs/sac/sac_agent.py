@@ -434,7 +434,7 @@ class SACAgent(BaseAlgorithm):
                                     (1.0 - tau) * target_param.data)
 
     def update(self, step, logging):
-        log_gradient_noise = True
+        log_gradient_noise = False
         obs, action, reward, next_obs, done = self.replay_buffer.sample(self.batch_size)
 
         # Critic
